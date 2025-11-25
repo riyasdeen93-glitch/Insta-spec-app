@@ -4,46 +4,65 @@ import {
   Globe, Building, Save, X, Copy, Pencil, DoorClosed, 
   DoorOpen, AlertCircle, ArrowRight, ArrowLeft, FileSpreadsheet, 
   Brain, Check, AlertTriangle, TreeDeciduous, RectangleHorizontal, 
-  Menu, ChevronDown, Search, Info
+  Menu, ChevronDown, Search, Info, Flame, Accessibility
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 // --- CONSTANTS & DATA ---
 
-const ROOM_TYPES = {
-  "Hospital / Healthcare": ["Patient Room", "Operating Theatre", "Nurse Station", "Clean Utility", "Dirty Utility", "Waiting Area", "Consultation Room", "Corridor", "Reception"],
-  "Education / School": ["Classroom", "Staff Room", "Library", "Auditorium", "Gymnasium", "Lab", "Cafeteria", "Corridor", "Admin Office"],
-  "Commercial Office": ["Open Office", "Meeting Room", "Director Cabin", "Server Room", "Reception", "Pantry", "Copy Room", "Corridor", "Conference Room"],
-  "Airport / Transport": ["Terminal Entry", "Check-in", "Security Check", "Boarding Gate", "Baggage Handling", "Duty Free", "Staff Entry", "Control Room"],
-  "Hospitality / Hotel": ["Guest Room", "Ballroom", "Kitchen", "Back of House", "Lobby", "Spa", "Gym", "Service Entry"],
-  "Residential": ["Entrance", "Living", "Bedroom", "Bathroom", "Kitchen", "Balcony", "Utility"]
+// Consolidated Data: Locations & Usages per Facility Type
+const FACILITY_DATA = {
+  "Commercial Office": {
+    locations: ["Open Office", "Meeting Room", "Director Cabin", "Server Room", "Reception", "Pantry", "Copy Room", "Corridor", "Conference Room", "Restroom", "Stairwell", "Lobby", "Electrical Cupboard"],
+    usages: ["Office / Passage", "Meeting Room", "Corridor / Circulation", "Stairwell / Exit", "Restroom", "Storage / Service", "Server / IT", "Main Entrance", "Fire Door (Cross-Corridor)"]
+  },
+  "Hospital / Healthcare": {
+    locations: ["Patient Room", "Operating Theatre", "Nurse Station", "Clean Utility", "Dirty Utility", "Waiting Area", "Consultation Room", "Corridor", "Reception", "X-Ray Room", "Pharmacy"],
+    usages: ["Patient Room", "Operating Theatre", "Consultation / Exam", "Corridor / Circulation", "Stairwell / Exit", "Restroom", "Clean / Dirty Utility", "Main Entrance", "Radiation Protection"]
+  },
+  "Education / School": {
+    locations: ["Classroom", "Staff Room", "Library", "Auditorium", "Gymnasium", "Lab", "Cafeteria", "Corridor", "Admin Office", "Music Room"],
+    usages: ["Classroom", "Assembly / Hall", "Staff Office", "Corridor / Circulation", "Stairwell / Exit", "Restroom", "Storage / Service", "Main Entrance", "Gymnasium"]
+  },
+  "Airport / Transport": {
+    locations: ["Terminal Entry", "Check-in", "Security Check", "Boarding Gate", "Baggage Handling", "Duty Free", "Staff Entry", "Control Room", "Prayer Room"],
+    usages: ["Terminal Entry", "Security / Checkpoint", "Boarding Gate", "Corridor / Circulation", "Stairwell / Exit", "Restroom", "Staff Only / Service", "Baggage / Logistics"]
+  },
+  "Hospitality / Hotel": {
+    locations: ["Guest Room", "Ballroom", "Kitchen", "Back of House", "Lobby", "Spa", "Gym", "Service Entry", "Linen Room"],
+    usages: ["Guest Room Entry", "Connecting Door", "Ballroom / Assembly", "Kitchen / Service", "Corridor / Circulation", "Stairwell / Exit", "Restroom", "Back of House", "Main Entrance"]
+  },
+  "Residential": {
+    locations: ["Entrance", "Living Room", "Bedroom", "Bathroom", "Kitchen", "Balcony", "Utility Room", "Garage", "Common Corridor", "Fire Stairs"],
+    usages: ["Unit Entrance (Fire Rated)", "Bedroom / Internal", "Bathroom / Privacy", "Kitchen", "Balcony / External", "Common Corridor", "Stairwell / Exit", "Service / Utility"]
+  }
 };
 
 const PRODUCT_SUBTYPES = {
   "Hinges": [
-    { name: "Butt Hinge", spec: "4.5x4.5 Ball Bearing, Stainless Steel" },
+    { name: "Butt Hinge", spec: "4.5x4.5 Ball Bearing, Stainless Steel, ANSI/EN Grade" },
     { name: "Concealed Hinge", spec: "3D Adjustable Concealed Hinge, Satin Chrome" },
     { name: "Pivot Set", spec: "Heavy Duty Floor Pivot & Top Center, Double Action" },
-    { name: "Geared Hinge", spec: "Continuous Geared Hinge, Full Mortise" }
+    { name: "Geared Hinge", spec: "Continuous Geared Hinge, Full Mortise, Heavy Duty" }
   ],
   "Locks": [
-    { name: "Mortise Lock", spec: "Sashlock case, Cylinder operation, Grade 1/3" },
+    { name: "Mortise Lock", spec: "Sashlock case, Cylinder operation, Heavy Duty" },
     { name: "Deadbolt", spec: "Heavy Duty Deadbolt, Thumbturn internal" },
     { name: "Cylindrical Lock", spec: "Leverset with integrated cylinder" },
     { name: "Magnetic Lock", spec: "Electromagnetic Lock, 1200lbs holding force" },
     { name: "Bathroom Lock", spec: "Privacy function, coin release indicator" },
-    { name: "Panic Bar", spec: "Rim Exit Device, Fire Rated" },
+    { name: "Panic Bar", spec: "Rim Exit Device, Fire Rated to UL/EN Standards" },
     { name: "Electric Strike", spec: "Fail Safe/Fail Secure, Monitored" }
   ],
   "Closers": [
     { name: "Overhead Closer", spec: "Surface mounted, Size 2-5, Backcheck" },
-    { name: "Cam Action Closer", spec: "Slide arm closer, High efficiency" },
+    { name: "Cam Action Closer", spec: "Slide arm closer, High efficiency, DDA Compliant" },
     { name: "Concealed Closer", spec: "Integrated in door leaf/frame" },
     { name: "Floor Spring", spec: "Floor mounted closer, Double action" },
     { name: "Auto Operator", spec: "Low energy swing door operator" }
   ],
   "Handles": [
-    { name: "Lever Handle", spec: "Return to door safety lever, 19mm dia" },
+    { name: "Lever Handle", spec: "Return to door safety lever, 19mm dia, SS" },
     { name: "Pull Handle", spec: "D-Handle, 300mm ctc, Bolt through" },
     { name: "Push Plate", spec: "Stainless steel push plate 300x75mm" },
     { name: "Flush Pull", spec: "Recessed flush pull, satin finish" }
@@ -64,7 +83,7 @@ const PRODUCT_SUBTYPES = {
     { name: "Kick Plate", spec: "SS Kick Plate 150mm x Door Width" }
   ],
   "Seals": [
-    { name: "Intumescent Seal", spec: "Fire & Smoke Seal, 15x4mm" },
+    { name: "Intumescent Seal", spec: "Fire & Smoke Seal, 15x4mm (Required for Fire Doors)" },
     { name: "Drop Seal", spec: "Automatic drop down seal, acoustic" },
     { name: "Threshold", spec: "Low profile DDA compliant threshold" }
   ]
@@ -267,12 +286,13 @@ const App = () => {
   const [doorForm, setDoorForm] = useState({
     id: '', mark: '', location: '', qty: 1, 
     width: 900, height: 2100, weight: 45, 
-    fire: 0, use: 'Office', material: 'Timber', config: 'Single'
+    fire: 0, use: '', material: 'Timber', config: 'Single'
   });
   
   // Validation State
   const [doorErrors, setDoorErrors] = useState({});
   const [doorHint, setDoorHint] = useState('');
+  const [complianceNote, setComplianceNote] = useState(null);
 
   // Adding Item State
   const [addItemModal, setAddItemModal] = useState({ isOpen: false, setId: null });
@@ -292,6 +312,13 @@ const App = () => {
       localStorage.setItem('specSmartDB', JSON.stringify({ projects }));
     }
   }, [projects]);
+
+  // Run compliance check whenever door form changes
+  useEffect(() => {
+    if (isDoorModalOpen) {
+      checkCompliance();
+    }
+  }, [doorForm.fire, doorForm.use, doorForm.width, doorForm.weight, doorForm.location]);
 
   const getProj = () => projects.find(p => p.id === currentId);
 
@@ -374,6 +401,32 @@ const App = () => {
     setProjects(updatedProjects);
   };
 
+  const checkCompliance = () => {
+    let note = null;
+    const useLower = doorForm.use.toLowerCase();
+    const locLower = doorForm.location.toLowerCase();
+    const isFireRated = doorForm.fire > 0;
+
+    // Rule 1: Stairwells & Exits
+    if ((useLower.includes('stair') || useLower.includes('exit')) && !isFireRated) {
+      note = { type: 'warning', msg: "Code Alert: Stairwell/Exit doors typically require a Fire Rating (e.g., 60min/90min per NFPA 80 / EN 1634)." };
+    }
+    // Rule 2: Unit Entrance (Residential/Hotel)
+    else if ((useLower.includes('unit') || useLower.includes('guest')) && !isFireRated) {
+      note = { type: 'warning', msg: "Code Alert: Unit Entry doors usually require a fire rating (e.g., FD30/20min)." };
+    }
+    // Rule 3: Accessibility
+    else if (doorForm.width < 850 && (useLower.includes('patient') || useLower.includes('accessible') || useLower.includes('entrance'))) {
+      note = { type: 'info', msg: "Accessibility Note: Clear opening width might be too narrow for wheelchair access (Recommend >900mm)." };
+    }
+    // Rule 4: Cross Corridor
+    else if (useLower.includes('corridor') && !isFireRated) {
+      note = { type: 'info', msg: "Check Code: Cross-corridor doors often require smoke/fire control." };
+    }
+
+    setComplianceNote(note);
+  };
+
   const validatePhysics = (field, value) => {
     const errors = { ...doorErrors };
     let hint = '';
@@ -403,6 +456,8 @@ const App = () => {
 
   const openDoorModal = (door = null) => {
     const proj = getProj();
+    const facilityUsages = FACILITY_DATA[proj.type]?.usages || FACILITY_DATA["Commercial Office"].usages;
+    
     if (door) {
       setDoorForm({ ...door });
     } else {
@@ -416,13 +471,14 @@ const App = () => {
         height: 2100, 
         weight: 45, 
         fire: 0, 
-        use: 'Office', 
+        use: facilityUsages[0], // Default to first valid usage for this facility
         material: 'Timber', 
         config: 'Single'
       });
     }
     setDoorErrors({});
     setDoorHint('');
+    setComplianceNote(null);
     setIsDoorModalOpen(true);
   };
 
@@ -457,17 +513,23 @@ const App = () => {
         addItem("Hinges", "H01", "Butt Hinge", `${hType}`, "3");
       }
 
-      if (use === "Toilet") {
+      const useLower = use.toLowerCase();
+
+      if (useLower.includes("toilet") || useLower.includes("restroom") || useLower.includes("bathroom")) {
         addItem("Locks", "L01", "Bathroom Lock", "Privacy function, coin release", "1");
-      } else if (use === "Stair") {
+      } else if (useLower.includes("stair") || useLower.includes("exit")) {
         addItem("Locks", "L01", "Panic Bar", "Rim Exit Device, Fire Rated", "1");
+      } else if (useLower.includes("storage") || useLower.includes("service")) {
+         addItem("Locks", "L01", "Deadbolt", "Deadbolt only, Cylinder/Turn", "1");
+         addItem("Handles", "H01", "Pull Handle", "D-Pull on push side", "1");
+         addItem("Handles", "H02", "Push Plate", "SS Push Plate", "1");
       } else {
         addItem("Locks", "L01", "Mortise Lock", "Sashlock case, Cylinder operation", "1");
         addItem("Cylinders", "C01", "Cylinder", "Euro Profile, Key/Turn", "1");
         addItem("Handles", "H02", "Lever Handle", "Return to door safety lever", "1 Pr");
       }
 
-      if (use !== "Toilet" && use !== "Store") {
+      if (!useLower.includes("toilet") && !useLower.includes("storage")) {
         const cSpec = rep.width > 1100 ? "Size 3-6 Heavy Duty" : "Size 2-4 Adjustable";
         addItem("Closers", "D01", "Overhead Closer", `Surface, ${cSpec}, Backcheck`, "1");
       }
@@ -530,10 +592,16 @@ const App = () => {
     const spec = subtype ? subtype.spec : "";
     
     // Generate Ref (Simple heuristic)
-    let ref = "X01";
-    if(category === "Hinges") ref = "H0" + (proj.sets.find(s => s.id === addItemModal.setId).items.filter(i => i.category === "Hinges").length + 1);
-    if(category === "Locks") ref = "L0" + (proj.sets.find(s => s.id === addItemModal.setId).items.filter(i => i.category === "Locks").length + 1);
-    if(category === "Closers") ref = "D0" + (proj.sets.find(s => s.id === addItemModal.setId).items.filter(i => i.category === "Closers").length + 1);
+    let refPrefix = "X";
+    if(category === "Hinges") refPrefix = "H";
+    if(category === "Locks") refPrefix = "L";
+    if(category === "Closers") refPrefix = "D";
+    if(category === "Handles") refPrefix = "H";
+    if(category === "Stops") refPrefix = "S";
+    if(category === "Seals") refPrefix = "GS";
+    
+    const count = proj.sets.find(s => s.id === addItemModal.setId).items.filter(i => i.category === category).length;
+    const ref = `${refPrefix}${String(count + 2).padStart(2, '0')}`; // Simple increment
 
     const updatedProjects = projects.map(p => {
       if (p.id === currentId) {
@@ -719,7 +787,7 @@ const App = () => {
                         }}
                         className="p-2.5 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-100 focus:border-primary outline-none w-full bg-white"
                       >
-                        {Object.keys(ROOM_TYPES).map(t => <option key={t} value={t}>{t}</option>)}
+                        {Object.keys(FACILITY_DATA).map(t => <option key={t} value={t}>{t}</option>)}
                       </select>
                     </div>
                     <div className="flex flex-col gap-1">
@@ -983,7 +1051,7 @@ const App = () => {
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-bold uppercase text-gray-500">Location</label>
                   <SearchableDropdown 
-                    options={ROOM_TYPES[getProj().type] || []}
+                    options={FACILITY_DATA[getProj().type]?.locations || []}
                     value={doorForm.location}
                     onChange={(val) => setDoorForm({...doorForm, location: val})}
                     placeholder="Select or type..."
@@ -1052,16 +1120,21 @@ const App = () => {
                 <div>
                   <label className="text-xs font-bold uppercase text-gray-500">Usage</label>
                   <select value={doorForm.use} onChange={e => setDoorForm({...doorForm, use: e.target.value})} className="w-full p-2.5 border rounded bg-white">
-                    <option value="Office">Office / Passage</option>
-                    <option value="Classroom">Classroom</option>
-                    <option value="Patient">Patient Room</option>
-                    <option value="Toilet">Restroom</option>
-                    <option value="Stair">Stairwell</option>
-                    <option value="Store">Storage</option>
-                    <option value="Entrance">Main Entrance</option>
+                    {FACILITY_DATA[getProj().type]?.usages.map(u => <option key={u} value={u}>{u}</option>)}
                   </select>
                 </div>
               </div>
+
+              {/* COMPLIANCE ASSISTANT */}
+              {complianceNote && (
+                <div className={`mt-4 p-3 rounded-lg border flex gap-3 items-start ${complianceNote.type === 'warning' ? 'bg-orange-50 border-orange-200 text-orange-800' : 'bg-blue-50 border-blue-200 text-blue-800'}`}>
+                  {complianceNote.type === 'warning' ? <Flame size={18} className="shrink-0 mt-0.5"/> : <Accessibility size={18} className="shrink-0 mt-0.5"/>}
+                  <div className="text-sm leading-relaxed">
+                    <strong>Code Check:</strong> {complianceNote.msg}
+                  </div>
+                </div>
+              )}
+
             </div>
             <div className="p-6 border-t border-gray-100 flex justify-end">
               <button onClick={saveDoor} className="w-full md:w-auto px-6 py-2 bg-primary text-white rounded hover:bg-primary-hover font-bold">Save Door</button>
