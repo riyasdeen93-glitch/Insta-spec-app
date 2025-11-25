@@ -1,21 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShieldCheck, LayoutGrid, PlusCircle, FolderOpen, Trash2, 
   Globe, Building, Save, X, Copy, Pencil, DoorClosed, 
   DoorOpen, AlertCircle, ArrowRight, ArrowLeft, FileSpreadsheet, 
-  Brain, Check, AlertTriangle, TreeDeciduous, RectangleHorizontal, Menu 
+  Brain, Check, AlertTriangle, TreeDeciduous, RectangleHorizontal, 
+  Menu, ChevronDown, Search, Info
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 // --- CONSTANTS & DATA ---
 
 const ROOM_TYPES = {
-  "Hospital / Healthcare": ["Patient Room", "Operating Theatre", "Nurse Station", "Clean Utility", "Dirty Utility", "Waiting Area", "Consultation Room"],
-  "Education / School": ["Classroom", "Staff Room", "Library", "Auditorium", "Gymnasium", "Lab", "Cafeteria"],
-  "Commercial Office": ["Open Office", "Meeting Room", "Director Cabin", "Server Room", "Reception", "Pantry", "Copy Room"],
-  "Airport / Transport": ["Terminal Entry", "Check-in", "Security Check", "Boarding Gate", "Baggage Handling", "Duty Free"],
-  "Hospitality / Hotel": ["Guest Room", "Ballroom", "Kitchen", "Back of House", "Lobby", "Spa"],
-  "Residential": ["Entrance", "Living", "Bedroom", "Bathroom", "Kitchen", "Balcony"]
+  "Hospital / Healthcare": ["Patient Room", "Operating Theatre", "Nurse Station", "Clean Utility", "Dirty Utility", "Waiting Area", "Consultation Room", "Corridor", "Reception"],
+  "Education / School": ["Classroom", "Staff Room", "Library", "Auditorium", "Gymnasium", "Lab", "Cafeteria", "Corridor", "Admin Office"],
+  "Commercial Office": ["Open Office", "Meeting Room", "Director Cabin", "Server Room", "Reception", "Pantry", "Copy Room", "Corridor", "Conference Room"],
+  "Airport / Transport": ["Terminal Entry", "Check-in", "Security Check", "Boarding Gate", "Baggage Handling", "Duty Free", "Staff Entry", "Control Room"],
+  "Hospitality / Hotel": ["Guest Room", "Ballroom", "Kitchen", "Back of House", "Lobby", "Spa", "Gym", "Service Entry"],
+  "Residential": ["Entrance", "Living", "Bedroom", "Bathroom", "Kitchen", "Balcony", "Utility"]
 };
 
 const PRODUCT_SUBTYPES = {
@@ -31,34 +32,132 @@ const PRODUCT_SUBTYPES = {
     { name: "Cylindrical Lock", spec: "Leverset with integrated cylinder" },
     { name: "Magnetic Lock", spec: "Electromagnetic Lock, 1200lbs holding force" },
     { name: "Bathroom Lock", spec: "Privacy function, coin release indicator" },
-    { name: "Panic Bar", spec: "Rim Exit Device, Fire Rated" }
+    { name: "Panic Bar", spec: "Rim Exit Device, Fire Rated" },
+    { name: "Electric Strike", spec: "Fail Safe/Fail Secure, Monitored" }
   ],
   "Closers": [
     { name: "Overhead Closer", spec: "Surface mounted, Size 2-5, Backcheck" },
     { name: "Cam Action Closer", spec: "Slide arm closer, High efficiency" },
     { name: "Concealed Closer", spec: "Integrated in door leaf/frame" },
-    { name: "Floor Spring", spec: "Floor mounted closer, Double action" }
+    { name: "Floor Spring", spec: "Floor mounted closer, Double action" },
+    { name: "Auto Operator", spec: "Low energy swing door operator" }
   ],
   "Handles": [
     { name: "Lever Handle", spec: "Return to door safety lever, 19mm dia" },
     { name: "Pull Handle", spec: "D-Handle, 300mm ctc, Bolt through" },
-    { name: "Push Plate", spec: "Stainless steel push plate 300x75mm" }
+    { name: "Push Plate", spec: "Stainless steel push plate 300x75mm" },
+    { name: "Flush Pull", spec: "Recessed flush pull, satin finish" }
   ],
   "Stops": [
     { name: "Door Stop", spec: "Floor mounted half-dome with rubber buffer" },
-    { name: "Wall Stop", spec: "Wall mounted projection stop" }
+    { name: "Wall Stop", spec: "Wall mounted projection stop" },
+    { name: "Overhead Stop", spec: "Concealed overhead stop/holder" }
   ],
   "Cylinders": [
-    { name: "Cylinder", spec: "Euro Profile, Key/Key or Key/Turn" }
+    { name: "Cylinder", spec: "Euro Profile, Key/Key or Key/Turn" },
+    { name: "Master Key Cylinder", spec: "GMK System, Restricted profile" }
+  ],
+  "Accessories": [
+    { name: "Flush Bolt", spec: "Lever action flush bolt, 300mm" },
+    { name: "Dust Proof Socket", spec: "Spring loaded dust proof socket" },
+    { name: "Signage", spec: "Fire Door Keep Shut / Push / Pull" },
+    { name: "Kick Plate", spec: "SS Kick Plate 150mm x Door Width" }
+  ],
+  "Seals": [
+    { name: "Intumescent Seal", spec: "Fire & Smoke Seal, 15x4mm" },
+    { name: "Drop Seal", spec: "Automatic drop down seal, acoustic" },
+    { name: "Threshold", spec: "Low profile DDA compliant threshold" }
   ]
 };
 
 const STANDARD_FINISHES = {
-  "ANSI": ["SSS (US32D)", "PSS (US32)", "SCP (US26D)", "PVD Brass (US3)", "Oil Rubbed Bronze (US10B)"],
-  "EN": ["SSS (Satin Stainless)", "PSS (Polished Stainless)", "SAA (Satin Anodized Alum)", "PVD (Brass Effect)", "RAL Powdercoat"]
+  "ANSI": ["SSS (US32D)", "PSS (US32)", "SCP (US26D)", "PVD Brass (US3)", "Oil Rubbed Bronze (US10B)", "Matte Black (US19)"],
+  "EN": ["SSS (Satin Stainless)", "PSS (Polished Stainless)", "SAA (Satin Anodized Alum)", "PVD (Brass Effect)", "RAL Powdercoat", "Matte Black"]
 };
 
-// --- COMPONENTS ---
+// --- CUSTOM UI COMPONENTS ---
+
+const SearchableDropdown = ({ options, value, onChange, placeholder }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [filter, setFilter] = useState('');
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const filteredOptions = options.filter(opt => 
+    opt.toLowerCase().includes(filter.toLowerCase())
+  );
+
+  return (
+    <div className="relative w-full" ref={dropdownRef}>
+      <div 
+        className="w-full p-2.5 border border-gray-300 rounded-md bg-white flex items-center justify-between cursor-pointer hover:border-primary transition-colors"
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <span className={value ? 'text-gray-900' : 'text-gray-400'}>
+          {value || placeholder}
+        </span>
+        <ChevronDown size={16} className={`text-gray-500 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </div>
+
+      {isOpen && (
+        <div className="absolute top-full left-0 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg z-50 max-h-60 flex flex-col">
+          <div className="p-2 border-b border-gray-100 sticky top-0 bg-white rounded-t-md">
+            <div className="relative">
+              <Search size={14} className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                className="w-full pl-8 p-1.5 text-sm border border-gray-200 rounded bg-gray-50 focus:outline-none focus:border-primary"
+                placeholder="Search..."
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                autoFocus
+              />
+            </div>
+          </div>
+          <div className="overflow-y-auto flex-1">
+            {filteredOptions.length > 0 ? (
+              filteredOptions.map((opt) => (
+                <div
+                  key={opt}
+                  className={`px-4 py-2 text-sm cursor-pointer hover:bg-indigo-50 ${value === opt ? 'bg-indigo-50 text-primary font-medium' : 'text-gray-700'}`}
+                  onClick={() => {
+                    onChange(opt);
+                    setIsOpen(false);
+                    setFilter('');
+                  }}
+                >
+                  {opt}
+                </div>
+              ))
+            ) : (
+              <div 
+                className="px-4 py-2 text-sm text-primary cursor-pointer hover:bg-indigo-50 font-medium border-t border-gray-100"
+                onClick={() => {
+                  onChange(filter); // Allow custom value
+                  setIsOpen(false);
+                  setFilter('');
+                }}
+              >
+                Use "{filter}"
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// --- MAIN APP COMPONENT ---
 
 const LandingPage = ({ onStart, hasProjects }) => (
   <div className="absolute top-0 left-0 w-full min-h-screen bg-gradient-to-br from-slate-50 to-indigo-50 z-50 flex flex-col overflow-y-auto">
@@ -174,6 +273,9 @@ const App = () => {
   // Validation State
   const [doorErrors, setDoorErrors] = useState({});
   const [doorHint, setDoorHint] = useState('');
+
+  // Adding Item State
+  const [addItemModal, setAddItemModal] = useState({ isOpen: false, setId: null });
 
   // Load Data on Mount
   useEffect(() => {
@@ -414,17 +516,32 @@ const App = () => {
     setProjects(updatedProjects);
   };
 
-  const addSetItem = (setId) => {
+  // This now triggers the modal
+  const handleAddItemClick = (setId) => {
+    setAddItemModal({ isOpen: true, setId });
+  };
+
+  // This actually adds the selected item
+  const addNewItem = (category, type) => {
     const proj = getProj();
     const defaultFinish = proj.standard === "ANSI" ? "SSS (US32D)" : "SSS (Satin Stainless)";
+    // Find default spec
+    const subtype = PRODUCT_SUBTYPES[category]?.find(s => s.name === type);
+    const spec = subtype ? subtype.spec : "";
     
+    // Generate Ref (Simple heuristic)
+    let ref = "X01";
+    if(category === "Hinges") ref = "H0" + (proj.sets.find(s => s.id === addItemModal.setId).items.filter(i => i.category === "Hinges").length + 1);
+    if(category === "Locks") ref = "L0" + (proj.sets.find(s => s.id === addItemModal.setId).items.filter(i => i.category === "Locks").length + 1);
+    if(category === "Closers") ref = "D0" + (proj.sets.find(s => s.id === addItemModal.setId).items.filter(i => i.category === "Closers").length + 1);
+
     const updatedProjects = projects.map(p => {
       if (p.id === currentId) {
         const newSets = p.sets.map(s => {
-          if (s.id === setId) {
+          if (s.id === addItemModal.setId) {
             return {
               ...s,
-              items: [...s.items, { category: "Hinges", ref: "New", type: "Butt Hinge", spec: "", qty: "1", finish: defaultFinish }]
+              items: [...s.items, { category, ref, type, spec, qty: "1", finish: defaultFinish }]
             };
           }
           return s;
@@ -434,6 +551,7 @@ const App = () => {
       return p;
     });
     setProjects(updatedProjects);
+    setAddItemModal({ isOpen: false, setId: null });
   };
 
   const deleteSetItem = (setId, idx) => {
@@ -468,7 +586,7 @@ const App = () => {
     const itemData = [];
     p.sets.forEach(s => {
       s.items.forEach(i => {
-        itemData.push({ "Set": s.id, "Set Name": s.name, "Ref": i.ref, "Type": i.type, "Finish": i.finish, "Spec": i.spec, "Qty": i.qty });
+        itemData.push({ "Set": s.id, "Set Name": s.name, "Ref": i.ref, "Category": i.category, "Type": i.type, "Finish": i.finish, "Spec": i.spec, "Qty": i.qty });
       });
     });
     const wsItems = XLSX.utils.json_to_sheet(itemData);
@@ -762,7 +880,7 @@ const App = () => {
                           </div>
                         </div>
                         
-                        <button onClick={() => addSetItem(s.id)} className="text-sm font-medium text-primary hover:underline flex items-center gap-1 mb-4 px-2 py-1">
+                        <button onClick={() => handleAddItemClick(s.id)} className="text-sm font-medium text-primary hover:underline flex items-center gap-1 mb-4 px-2 py-1">
                           <PlusCircle size={14}/> Add Item
                         </button>
 
@@ -860,16 +978,20 @@ const App = () => {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-bold uppercase text-gray-500">Mark</label>
-                  <input type="text" value={doorForm.mark} onChange={e => setDoorForm({...doorForm, mark: e.target.value})} className="p-2 border rounded" />
+                  <input type="text" value={doorForm.mark} onChange={e => setDoorForm({...doorForm, mark: e.target.value})} className="p-2.5 border rounded" />
                 </div>
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-bold uppercase text-gray-500">Location</label>
-                  <input list="rooms" type="text" value={doorForm.location} onChange={e => setDoorForm({...doorForm, location: e.target.value})} className="p-2 border rounded" />
-                  <datalist id="rooms">{ROOM_TYPES[getProj().type]?.map(r => <option key={r} value={r}/>)}</datalist>
+                  <SearchableDropdown 
+                    options={ROOM_TYPES[getProj().type] || []}
+                    value={doorForm.location}
+                    onChange={(val) => setDoorForm({...doorForm, location: val})}
+                    placeholder="Select or type..."
+                  />
                 </div>
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-bold uppercase text-gray-500">Qty</label>
-                  <input type="number" value={doorForm.qty} onChange={e => setDoorForm({...doorForm, qty: parseInt(e.target.value)})} className="p-2 border rounded" />
+                  <input type="number" value={doorForm.qty} onChange={e => setDoorForm({...doorForm, qty: parseInt(e.target.value)})} className="p-2.5 border rounded" />
                 </div>
               </div>
 
@@ -878,17 +1000,17 @@ const App = () => {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <label className="text-xs font-bold uppercase text-gray-500">Width (mm)</label>
-                    <input type="number" value={doorForm.width} onChange={e => {setDoorForm({...doorForm, width: parseInt(e.target.value)}); validatePhysics('width', e.target.value);}} className={`w-full p-2 border rounded ${doorErrors.width ? 'border-red-300 bg-red-50' : ''}`} />
+                    <input type="number" value={doorForm.width} onChange={e => {setDoorForm({...doorForm, width: parseInt(e.target.value)}); validatePhysics('width', e.target.value);}} className={`w-full p-2.5 border rounded ${doorErrors.width ? 'border-red-300 bg-red-50' : ''}`} />
                     {doorErrors.width && <div className="text-red-500 text-xs mt-1 flex items-center gap-1"><AlertCircle size={12}/> {doorErrors.width}</div>}
                   </div>
                   <div>
                     <label className="text-xs font-bold uppercase text-gray-500">Height (mm)</label>
-                    <input type="number" value={doorForm.height} onChange={e => {setDoorForm({...doorForm, height: parseInt(e.target.value)}); validatePhysics('height', e.target.value);}} className={`w-full p-2 border rounded ${doorErrors.height ? 'border-red-300 bg-red-50' : ''}`} />
+                    <input type="number" value={doorForm.height} onChange={e => {setDoorForm({...doorForm, height: parseInt(e.target.value)}); validatePhysics('height', e.target.value);}} className={`w-full p-2.5 border rounded ${doorErrors.height ? 'border-red-300 bg-red-50' : ''}`} />
                     {doorErrors.height && <div className="text-red-500 text-xs mt-1 flex items-center gap-1"><AlertCircle size={12}/> {doorErrors.height}</div>}
                   </div>
                   <div>
                     <label className="text-xs font-bold uppercase text-gray-500">Weight (kg)</label>
-                    <input type="number" value={doorForm.weight} onChange={e => {setDoorForm({...doorForm, weight: parseInt(e.target.value)}); validatePhysics('weight', e.target.value);}} className="w-full p-2 border rounded" />
+                    <input type="number" value={doorForm.weight} onChange={e => {setDoorForm({...doorForm, weight: parseInt(e.target.value)}); validatePhysics('weight', e.target.value);}} className="w-full p-2.5 border rounded" />
                   </div>
                 </div>
                 {doorHint && <div className="mt-2 text-orange-600 text-sm bg-orange-50 p-2 rounded border border-orange-100 flex items-center gap-2"><AlertTriangle size={14}/> {doorHint}</div>}
@@ -897,7 +1019,7 @@ const App = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <label className="text-xs font-bold uppercase text-gray-500 mb-2 block">Material</label>
-                  <select value={doorForm.material} onChange={e => setDoorForm({...doorForm, material: e.target.value})} className="w-full p-2 border rounded bg-white">
+                  <select value={doorForm.material} onChange={e => setDoorForm({...doorForm, material: e.target.value})} className="w-full p-2.5 border rounded bg-white">
                     <option value="Timber">Timber / Wood</option>
                     <option value="Metal">Hollow Metal</option>
                     <option value="Glass">Glass</option>
@@ -920,7 +1042,7 @@ const App = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs font-bold uppercase text-gray-500">Fire Rating</label>
-                  <select value={doorForm.fire} onChange={e => setDoorForm({...doorForm, fire: parseInt(e.target.value)})} className="w-full p-2 border rounded bg-white">
+                  <select value={doorForm.fire} onChange={e => setDoorForm({...doorForm, fire: parseInt(e.target.value)})} className="w-full p-2.5 border rounded bg-white">
                     {getProj().standard === 'ANSI' 
                       ? <><option value="0">Non-Rated</option><option value="20">20 min</option><option value="45">45 min</option><option value="90">90 min</option><option value="180">3 Hour</option></>
                       : <><option value="0">None</option><option value="30">E30</option><option value="60">E60</option><option value="90">E90</option><option value="120">E120</option></>
@@ -929,7 +1051,7 @@ const App = () => {
                 </div>
                 <div>
                   <label className="text-xs font-bold uppercase text-gray-500">Usage</label>
-                  <select value={doorForm.use} onChange={e => setDoorForm({...doorForm, use: e.target.value})} className="w-full p-2 border rounded bg-white">
+                  <select value={doorForm.use} onChange={e => setDoorForm({...doorForm, use: e.target.value})} className="w-full p-2.5 border rounded bg-white">
                     <option value="Office">Office / Passage</option>
                     <option value="Classroom">Classroom</option>
                     <option value="Patient">Patient Room</option>
@@ -943,6 +1065,47 @@ const App = () => {
             </div>
             <div className="p-6 border-t border-gray-100 flex justify-end">
               <button onClick={saveDoor} className="w-full md:w-auto px-6 py-2 bg-primary text-white rounded hover:bg-primary-hover font-bold">Save Door</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Item Modal */}
+      {addItemModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50 rounded-t-xl">
+              <h3 className="text-lg font-bold">Add Hardware Item</h3>
+              <button onClick={() => setAddItemModal({ isOpen: false, setId: null })} className="text-gray-400 hover:text-gray-600"><X size={20}/></button>
+            </div>
+            
+            <div className="p-6">
+              <div className="bg-orange-50 border border-orange-100 rounded-lg p-3 mb-6 flex gap-3 items-start">
+                <AlertTriangle className="text-orange-600 shrink-0 mt-0.5" size={18} />
+                <p className="text-xs text-orange-800 leading-relaxed">
+                  <strong>Code Compliance Warning:</strong> Adding manual items may affect the fire rating or egress compliance of this set. Verify relevant codes (NFPA 80 / EN 1634) before proceeding.
+                </p>
+              </div>
+
+              <div className="space-y-4 max-h-[50vh] overflow-y-auto pr-2">
+                {Object.entries(PRODUCT_SUBTYPES).map(([category, items]) => (
+                  <div key={category}>
+                    <h4 className="text-xs font-bold text-gray-400 uppercase mb-2">{category}</h4>
+                    <div className="grid grid-cols-1 gap-2">
+                      {items.map((item) => (
+                        <button 
+                          key={item.name}
+                          onClick={() => addNewItem(category, item.name)}
+                          className="text-left px-4 py-3 border border-gray-100 rounded hover:border-primary hover:bg-indigo-50 transition-colors group"
+                        >
+                          <div className="font-medium text-gray-800 group-hover:text-primary">{item.name}</div>
+                          <div className="text-xs text-gray-500 truncate">{item.spec}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
