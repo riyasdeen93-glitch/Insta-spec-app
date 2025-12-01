@@ -47,6 +47,36 @@ const ACOUSTIC_RECOMMENDATIONS = {
     "Server / IT": 40, "Guest Room Entry": 35, "Unit Entrance (Fire Rated)": 35, "Restroom": 30
 };
 
+// Smart Usage Templates
+const SMART_TEMPLATES = {
+    "prayer": {
+        name: "Prayer / Quiet Room",
+        desc: "Aesthetic, Quiet Operation, Privacy",
+        items: [
+            { category: "Hinges", type: "Concealed Hinge", style: "3D Adjustable", spec: "High Load, 3D Adj", qty: "3" },
+            { category: "Locks", type: "Mortise Lock", style: "Sashlock", spec: "Silent Latch, Roller Bolt", qty: "1" },
+            { category: "Handles", type: "Lever Handle", style: "Return to Door", spec: "Satin Nickel", qty: "1 Pr" },
+            { category: "Closers", type: "Concealed Closer", style: "Overhead Concealed", spec: "Cam-Motion, Cushioned Stop", qty: "1" },
+            { category: "Seals", type: "Drop Seal", style: "Mortised", spec: "Auto Drop, 42dB Acoustic", qty: "1" },
+            { category: "Stops", type: "Door Stop", style: "Floor Mounted Dome", spec: "Dome shape", qty: "1" }
+        ],
+        operation: "Door is self-closing with cushioned stop. Acoustic seal drops upon closing for quiet privacy."
+    },
+    "server": {
+        name: "Server / IT Room",
+        desc: "High Security, Ventilation Control",
+        items: [
+            { category: "Hinges", type: "Butt Hinge", style: "Ball Bearing", spec: "4.5x4.5, Security Pin", qty: "3" },
+            { category: "Locks", type: "Electric Strike", style: "Fail Secure", spec: "Monitored", qty: "1" },
+            { category: "Locks", type: "Mortise Lock", style: "Nightlatch", spec: "Locked outside", qty: "1" },
+            { category: "Handles", type: "Lever Handle", style: "Return to Door", spec: "SS Lever on Rose", qty: "1 Pr" },
+            { category: "Closers", type: "Overhead Closer", style: "Rack & Pinion", spec: "HD, Backcheck, Delayed Action", qty: "1" },
+            { category: "Accessories", type: "Signage", style: "Disc", spec: "'Restricted Access'", qty: "1" }
+        ],
+        operation: "Door is securely locked. Access via access control. Free egress at all times."
+    }
+};
+
 // Expanded Product Catalog with CSI Codes and Styles
 const PRODUCT_CATALOG = {
   "Hinges": {
@@ -66,7 +96,8 @@ const PRODUCT_CATALOG = {
       { name: "Cylindrical Lock", styles: ["Leverset", "Knobset", "Interconnected"] },
       { name: "Panic Bar", styles: ["Rim Type", "Surface Vertical Rod", "Concealed Vertical Rod", "Mortise Type"] },
       { name: "Electric Strike", styles: ["Fail Safe", "Fail Secure"] },
-      { name: "Magnetic Lock", styles: ["Surface Mount", "Shear Lock", "Recessed"] }
+      { name: "Magnetic Lock", styles: ["Surface Mount", "Shear Lock", "Recessed"] },
+      { name: "Patch Lock", styles: ["Corner Patch Lock", "Center Patch Lock"] }
     ]
   },
   "Closers": {
@@ -166,7 +197,7 @@ const SearchableDropdown = ({ options, value, onChange, placeholder }) => {
       </div>
 
       {isOpen && (
-        <div className="absolute top-full left-0 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg z-50 max-h-60 flex flex-col">
+        <div className="absolute top-full left-0 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg z-50 max-h-60 flex flex-col z-50">
           <div className="p-2 border-b border-gray-100 sticky top-0 bg-white rounded-t-md">
             <div className="relative">
               <Search size={14} className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400" />
@@ -348,6 +379,7 @@ const DoorPreview = ({ door, hardwareSet }) => {
            </>
         )}
 
+        {/* Closer Body & Arm */}
         {hasCloser && !isFloorSpring && (
           <g transform={leafHinge === 'left' ? "translate(10, 10)" : "translate(50, 10)"}>
             <rect x="0" y="0" width="30" height="10" fill="#475569" rx="1" />
@@ -494,10 +526,10 @@ const App = () => {
   const [library, setLibrary] = useState([]);
   const [printMode, setPrintMode] = useState(false);
   
-  // Door Modal State
+  // Door Modal State (Hierarchical Location)
   const [doorForm, setDoorForm] = useState({
     id: '', mark: '', 
-    zone: 'Tower A', level: '01', roomName: '', // Corrected Default
+    zone: 'Tower A', level: '01', roomName: '', 
     qty: 1, 
     width: 900, height: 2100, weight: 45, 
     fire: 0, use: '', material: 'Timber', config: 'Single',
@@ -788,7 +820,200 @@ const App = () => {
     setDoorErrors({});
     setDoorHint('');
     setComplianceNote(null);
+    // Ensure exclusive modal state
+    setAddItemModal({ isOpen: false, setId: null });
     setIsDoorModalOpen(true);
+  };
+
+  const downloadCSV = (content, filename) => {
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    if (link.download !== undefined) {
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', filename);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  };
+
+  const exportData = () => {
+    const p = getProj();
+    // Simple XML Spreadsheet generation for multi-sheet support
+    const xmlBody = `
+      <?xml version="1.0"?>
+      <?mso-application progid="Excel.Sheet"?>
+      <Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+      xmlns:o="urn:schemas-microsoft-com:office:office"
+      xmlns:x="urn:schemas-microsoft-com:office:excel"
+      xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+      xmlns:html="http://www.w3.org/TR/REC-html40">
+      
+      <Styles>
+          <Style ss:ID="Default" ss:Name="Normal">
+              <Alignment ss:Vertical="Bottom"/>
+              <Borders/>
+              <Font ss:FontName="Calibri" x:Family="Swiss" ss:Size="11" ss:Color="#000000"/>
+              <Interior/>
+              <NumberFormat/>
+              <Protection/>
+          </Style>
+          <Style ss:ID="sHeader">
+              <Font ss:FontName="Calibri" x:Family="Swiss" ss:Size="11" ss:Color="#FFFFFF" ss:Bold="1"/>
+              <Interior ss:Color="#4F46E5" ss:Pattern="Solid"/>
+          </Style>
+          <Style ss:ID="sTitle">
+             <Font ss:FontName="Calibri" x:Family="Swiss" ss:Size="14" ss:Bold="1"/>
+          </Style>
+      </Styles>
+
+      <Worksheet ss:Name="Hardware Specs">
+        <Table>
+          <Row><Cell ss:StyleID="sTitle"><Data ss:Type="String">Project: ${p.name}</Data></Cell></Row>
+          <Row><Cell><Data ss:Type="String">Standard: ${p.standard} | Jurisdiction: ${p.details?.jurisdiction}</Data></Cell></Row>
+          <Row><Cell><Data ss:Type="String"></Data></Cell></Row>
+          
+          <Row>
+            <Cell ss:StyleID="sHeader"><Data ss:Type="String">Set</Data></Cell>
+            <Cell ss:StyleID="sHeader"><Data ss:Type="String">Set Name</Data></Cell>
+            <Cell ss:StyleID="sHeader"><Data ss:Type="String">Ref</Data></Cell>
+            <Cell ss:StyleID="sHeader"><Data ss:Type="String">Category</Data></Cell>
+            <Cell ss:StyleID="sHeader"><Data ss:Type="String">Product Type</Data></Cell>
+            <Cell ss:StyleID="sHeader"><Data ss:Type="String">Style</Data></Cell>
+            <Cell ss:StyleID="sHeader"><Data ss:Type="String">Finish</Data></Cell>
+            <Cell ss:StyleID="sHeader"><Data ss:Type="String">Spec</Data></Cell>
+            <Cell ss:StyleID="sHeader"><Data ss:Type="String">Qty</Data></Cell>
+          </Row>
+          ${p.sets.flatMap(s => (s.items || []).map(i => `
+            <Row>
+              <Cell><Data ss:Type="String">${s.id}</Data></Cell>
+              <Cell><Data ss:Type="String">${s.name}</Data></Cell>
+              <Cell><Data ss:Type="String">${i.ref}</Data></Cell>
+              <Cell><Data ss:Type="String">${i.category}</Data></Cell>
+              <Cell><Data ss:Type="String">${i.type}</Data></Cell>
+              <Cell><Data ss:Type="String">${i.style || ''}</Data></Cell>
+              <Cell><Data ss:Type="String">${i.finish}</Data></Cell>
+              <Cell><Data ss:Type="String">${i.spec}</Data></Cell>
+              <Cell><Data ss:Type="String">${i.qty}</Data></Cell>
+            </Row>
+          `)).join('')}
+        </Table>
+      </Worksheet>
+
+      <Worksheet ss:Name="Door Schedule">
+        <Table>
+          <Row><Cell ss:StyleID="sTitle"><Data ss:Type="String">Door Schedule</Data></Cell></Row>
+          <Row><Cell><Data ss:Type="String"></Data></Cell></Row>
+          <Row>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Mark</Data></Cell>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Zone</Data></Cell>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Level</Data></Cell>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Room</Data></Cell>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Qty</Data></Cell>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Width</Data></Cell>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Height</Data></Cell>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Thk</Data></Cell>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Fire Rating</Data></Cell>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Acoustic</Data></Cell>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Material</Data></Cell>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Config</Data></Cell>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Handing</Data></Cell>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">HW Set</Data></Cell>
+          </Row>
+          ${p.doors.map(d => `
+             <Row>
+               <Cell><Data ss:Type="String">${d.mark}</Data></Cell>
+               <Cell><Data ss:Type="String">${d.zone}</Data></Cell>
+               <Cell><Data ss:Type="String">${d.level}</Data></Cell>
+               <Cell><Data ss:Type="String">${d.roomName}</Data></Cell>
+               <Cell><Data ss:Type="Number">${d.qty}</Data></Cell>
+               <Cell><Data ss:Type="Number">${d.width}</Data></Cell>
+               <Cell><Data ss:Type="Number">${d.height}</Data></Cell>
+               <Cell><Data ss:Type="Number">${d.thickness}</Data></Cell>
+               <Cell><Data ss:Type="String">${d.fire > 0 ? d.fire + ' min' : 'NFR'}</Data></Cell>
+               <Cell><Data ss:Type="String">${d.stc ? d.stc + ' dB' : 'N/A'}</Data></Cell>
+               <Cell><Data ss:Type="String">${d.material}</Data></Cell>
+               <Cell><Data ss:Type="String">${d.config}</Data></Cell>
+               <Cell><Data ss:Type="String">${d.handing}</Data></Cell>
+               <Cell><Data ss:Type="String">${p.sets.find(s => s.doors.includes(d.id))?.id || 'None'}</Data></Cell>
+             </Row>
+          `).join('')}
+        </Table>
+      </Worksheet>
+
+      <Worksheet ss:Name="BOM">
+        <Table>
+           <Row><Cell ss:StyleID="sTitle"><Data ss:Type="String">Bill of Materials</Data></Cell></Row>
+           <Row><Cell><Data ss:Type="String"></Data></Cell></Row>
+           <Row>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Category</Data></Cell>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Product Type</Data></Cell>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Style</Data></Cell>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Spec</Data></Cell>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Finish</Data></Cell>
+             <Cell ss:StyleID="sHeader"><Data ss:Type="String">Total Qty</Data></Cell>
+           </Row>
+           ${(() => {
+               // BOM Logic Calculation
+               const bom = {};
+               p.sets.forEach(s => {
+                   const doorsInSet = p.doors.filter(d => s.doors.includes(d.id));
+                   const totalDoors = doorsInSet.reduce((sum, d) => sum + d.qty, 0);
+                   (s.items || []).forEach(i => {
+                       const key = `${i.category}|${i.type}|${i.style}|${i.spec}|${i.finish}`;
+                       if (!bom[key]) bom[key] = { ...i, total: 0 };
+                       // Parse quantity (handle "1 Pr" or text)
+                       let q = parseFloat(i.qty);
+                       if (isNaN(q)) q = 1;
+                       bom[key].total += (q * totalDoors);
+                   });
+               });
+               return Object.values(bom).map(i => `
+                   <Row>
+                     <Cell><Data ss:Type="String">${i.category}</Data></Cell>
+                     <Cell><Data ss:Type="String">${i.type}</Data></Cell>
+                     <Cell><Data ss:Type="String">${i.style || ''}</Data></Cell>
+                     <Cell><Data ss:Type="String">${i.spec}</Data></Cell>
+                     <Cell><Data ss:Type="String">${i.finish}</Data></Cell>
+                     <Cell><Data ss:Type="Number">${i.total}</Data></Cell>
+                   </Row>
+               `).join('');
+           })()}
+        </Table>
+      </Worksheet>
+      </Workbook>
+    `;
+
+    const blob = new Blob([xmlBody], { type: 'application/vnd.ms-excel' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `${p.name.replace(/\s+/g, '_')}_Complete_Schedule.xls`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const exportBIMData = () => {
+    const p = getProj();
+    const bimRows = p.doors.map(d => ({
+        "Mark": d.mark,
+        "IfcDoorStyle": d.config,
+        "Width": d.width,
+        "Height": d.height,
+        "FireRating": d.fire,
+        "AcousticRating": d.stc || "N/A", 
+        "HardwareSet": p.sets.find(s => s.doors.includes(d.id))?.id || "None"
+    }));
+
+    const headers = Object.keys(bimRows[0]);
+    const csvContent = [
+      headers.join(','),
+      ...bimRows.map(row => headers.map(header => `"${(row[header] || '').toString().replace(/"/g, '""')}"`).join(','))
+    ].join('\n');
+
+    downloadCSV(csvContent, `${p.name.replace(/\s+/g, '_')}_BIM_SharedParams.csv`);
   };
 
   // Hardware Logic
@@ -905,6 +1130,8 @@ const App = () => {
 
   const addNewItem = (category, type) => {
     const proj = getProj();
+    if (!proj) return;
+    
     const defaultFinish = proj.standard === "ANSI" ? "630 (US32D)" : "SSS";
     
     // Find styles
@@ -920,7 +1147,10 @@ const App = () => {
     if(category === "Stops") refPrefix = "S";
     if(category === "Seals") refPrefix = "GS";
     
-    const count = proj.sets.find(s => s.id === addItemModal.setId).items.filter(i => i.category === category).length;
+    const targetSet = proj.sets.find(s => s.id === addItemModal.setId);
+    if (!targetSet) return;
+
+    const count = targetSet.items.filter(i => i.category === category).length;
     const ref = `${refPrefix}${String(count + 2).padStart(2, '0')}`;
 
     const updatedProjects = projects.map(p => {
@@ -1546,13 +1776,13 @@ const App = () => {
 
       {/* Door Modal Overlay */}
       {isDoorModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 sm:p-6">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+            <div className="p-4 md:p-6 border-b border-gray-100 flex justify-between items-center shrink-0">
               <h3 className="text-xl font-bold">Edit Door</h3>
               <button onClick={() => setIsDoorModalOpen(false)} className="text-gray-400 hover:text-gray-600 p-2"><X size={24}/></button>
             </div>
-            <div className="p-6 space-y-6">
+            <div className="p-4 md:p-6 space-y-6 overflow-y-auto flex-1">
               
               {/* Hierarchical Location */}
               <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
@@ -1722,7 +1952,7 @@ const App = () => {
               )}
 
             </div>
-            <div className="p-6 border-t border-gray-100 flex justify-end">
+            <div className="p-4 md:p-6 border-t border-gray-100 flex justify-end shrink-0 bg-gray-50 rounded-b-xl">
               <button onClick={saveDoor} className="w-full md:w-auto px-6 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 font-bold">Save Door</button>
             </div>
           </div>
@@ -1731,20 +1961,20 @@ const App = () => {
 
       {/* Add Item Modal */}
       {addItemModal.isOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg">
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50 rounded-t-xl">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 sm:p-6">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]">
+            <div className="p-4 md:p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50 rounded-t-xl shrink-0">
               <h3 className="text-lg font-bold">Add Hardware Item</h3>
               <button onClick={() => setAddItemModal({ isOpen: false, setId: null })} className="text-gray-400 hover:text-gray-600"><X size={20}/></button>
             </div>
-            <div className="p-6">
+            <div className="p-4 md:p-6 overflow-y-auto flex-1">
               <div className="bg-orange-50 border border-orange-100 rounded-lg p-3 mb-6 flex gap-3 items-start">
                 <AlertTriangle className="text-orange-600 shrink-0 mt-0.5" size={18} />
                 <p className="text-xs text-orange-800 leading-relaxed">
                   <strong>Code Compliance Warning:</strong> Adding manual items may affect the fire rating.
                 </p>
               </div>
-              <div className="space-y-4 max-h-[50vh] overflow-y-auto pr-2">
+              <div className="space-y-4">
                 {Object.entries(PRODUCT_CATALOG).map(([category, data]) => (
                   <div key={category}>
                     <h4 className="text-xs font-bold text-gray-400 uppercase mb-2 flex justify-between">
