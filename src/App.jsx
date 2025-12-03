@@ -70,7 +70,7 @@ const PRODUCT_CATALOG = {
     csi: "08 71 10",
     types: [
       { name: "Butt Hinge", styles: ["Ball Bearing", "Plain Bearing", "Concealed Bearing", "Spring Hinge"] },
-      { name: "Concealed Hinge", styles: ["3D Adjustable", "Tectus Type", "Spring Concealed"] },
+      { name: "Concealed Hinge", styles: ["3D Adjustable", "Spring Concealed"] },
       { name: "Pivot Set", styles: ["Offset Pivot", "Center Hung", "Intermediate Pivot"] },
       { name: "Continuous Hinge", styles: ["Geared Aluminum", "Pin & Barrel Stainless"] },
       { name: "Patch Fitting", styles: ["Top Patch", "Bottom Patch", "Overpanel Patch"] }
@@ -353,119 +353,411 @@ const DoorPreview = ({ door, hardwareSet }) => {
   const isGlass = door.material === 'Glass';
   const isAluminum = door.material === 'Aluminum';
   const isMetal = door.material === 'Metal';
+  const isTimber = door.material === 'Timber';
   const hasVision = door.visionPanel;
   
-  let doorFill = '#d4a373'; // Wood Default
-  let doorStroke = '#a98467';
-  let frameColor = '#8a6a4b';
+  let doorFill = '#d6a15c';
+  let doorStroke = '#a9744f';
+  let frameColor = '#7c4f2f';
+  let frameShadow = '#5b391f';
+  let panelHighlight = '#f0c999';
   
   if (isGlass) {
-    doorFill = '#e0f2fe'; 
-    doorStroke = '#bae6fd';
-    frameColor = '#cbd5e1'; // Minimal frame or wall
+    doorFill = 'rgba(224,242,254,0.9)';
+    doorStroke = '#7dd3fc';
+    frameColor = '#94a3b8';
+    frameShadow = '#475569';
+    panelHighlight = '#bae6fd';
   } else if (isAluminum) {
-    doorFill = '#f0f9ff'; 
-    doorStroke = '#94a3b8'; 
-    frameColor = '#475569'; 
+    doorFill = '#e5e7eb';
+    doorStroke = '#94a3b8';
+    frameColor = '#6b7280';
+    frameShadow = '#475569';
+    panelHighlight = '#f8fafc';
   } else if (isMetal) {
-    doorFill = '#fca5a5'; 
-    doorStroke = '#ef4444';
-    frameColor = '#7f1d1d';
+    doorFill = '#d1d5db';
+    doorStroke = '#9ca3af';
+    frameColor = '#4b5563';
+    frameShadow = '#1f2937';
+    panelHighlight = '#e5e7eb';
   }
   
-  const hasPanic = hardwareSet?.items?.some(i => i.type.includes('Panic'));
-  const hasKick = hardwareSet?.items?.some(i => i.type.includes('Kick') || i.type.includes('Protection'));
-  const hasCloser = hardwareSet?.items?.some(i => i.type.includes('Closer') || i.type.includes('Floor Spring'));
-  const hasPull = hardwareSet?.items?.some(i => i.type.includes('Pull'));
-  const isFloorSpring = hardwareSet?.items?.some(i => i.type.includes('Floor Spring'));
-  const hasLouver = hardwareSet?.items?.some(i => i.type.includes('Louver')); // Not standard item but for visualization
+  const viewPadding = 12;
+  const frameWidth = isDouble ? 280 : 170;
+  const frameHeight = 240;
+  const frameThickness = 12;
+  const clearance = 3;
+  const meetingGap = isDouble ? 6 : 0;
+  
+  const viewWidth = frameWidth + viewPadding * 2;
+  const viewHeight = frameHeight + 60;
+  
+  const frameX = viewPadding;
+  const frameY = viewPadding;
+  
+  const innerX = frameX + frameThickness;
+  const innerY = frameY + frameThickness;
+  const innerWidth = frameWidth - frameThickness * 2;
+  const innerHeight = frameHeight - frameThickness;
+  
+  const doorY = innerY + clearance;
+  const doorHeight = innerHeight - clearance * 2;
+  const singleLeafWidth = innerWidth - clearance * 2;
+  const doubleLeafWidth = (innerWidth - clearance * 2 - meetingGap) / 2;
+  const floorLineY = frameY + frameHeight + 6;
+  
+  const hingeColor = '#cfd6e2';
+  const hingeOutline = '#94a3b8';
+  const hardwareColor = '#64748b';
+  const closerColor = '#cfd6e3';
+  const floorCloserColor = '#d9dee7';
+  const wallFill = '#f8fafc';
+  
+  const hardwareItems = hardwareSet?.items || [];
+  const includesKeyword = (list = hardwareItems, keyword) => list.some(item => `${item.type || ''} ${item.style || ''} ${item.category || ''}`.toLowerCase().includes(keyword));
+  const itemsByCategory = (category) => hardwareItems.filter(item => item.category === category);
+  const handles = itemsByCategory('Handles');
+  const locks = itemsByCategory('Locks');
+  const accessories = itemsByCategory('Accessories');
+  const closers = itemsByCategory('Closers');
+  const stops = itemsByCategory('Stops');
+  const seals = itemsByCategory('Seals');
+  const hingeItems = itemsByCategory('Hinges');
+  const hingeDescriptor = hingeItems.map(i => `${i.name || ''} ${i.type || ''} ${i.style || ''}`).join(' ').toLowerCase();
+
+  const hasPanic = includesKeyword([...handles, ...locks], 'panic');
+  const hasPullHandle = includesKeyword(handles, 'pull');
+  const hasLeverHandle = includesKeyword(handles, 'lever');
+  const hasPushPlate = includesKeyword(handles, 'push');
+  const hasKick = includesKeyword(accessories, 'kick plate');
+  const hasSurfaceCloser = closers.some(item => !(`${item.type || ''} ${item.style || ''}`.toLowerCase().includes('floor spring')));
+  const hasFloorSpring = closers.some(item => (`${item.type || ''} ${item.style || ''}`.toLowerCase().includes('floor spring')));
+  const hasAutoOperator = closers.some(item => `${item.name || ''} ${item.type || ''} ${item.style || ''}`.toLowerCase().includes('auto'));
+  const hasLouver = includesKeyword(accessories, 'louver');
+  const hasViewer = includesKeyword(accessories, 'viewer');
+  const hasFlushBolt = includesKeyword(accessories.concat(locks), 'flush bolt');
+  const stopItem = stops[0];
+  const stopDescriptor = stopItem ? `${stopItem.type || ''} ${stopItem.style || ''}`.toLowerCase() : '';
+  const stopPlacement = stopItem ? (stopDescriptor.includes('floor') ? 'floor' : stopDescriptor.includes('wall') ? 'wall' : 'general') : null;
+  const hasDoorStop = Boolean(stopItem);
+  const hasDropSeal = includesKeyword(seals, 'drop') || includesKeyword(seals, 'automatic bottom');
+  const hasThreshold = includesKeyword(seals, 'threshold');
   
   const handing = door.handing || 'RH';
 
-  const DoorLeaf = ({ x, leafHanding, isInactive }) => {
-    const leafHinge = leafHanding === 'LH' ? 'left' : 'right';
-    const handleX = leafHinge === 'left' ? 75 : 15;
-    
+  const DoorLeaf = ({ x, width, leafHanding, isInactive }) => {
+    const hingeOnLeft = leafHanding === 'LH';
+    const hingeStripWidth = 6;
+    const lockStripWidth = 5;
+    const handleCenterX = hingeOnLeft ? x + width - 14 : x + 14;
+    const handleCenterY = doorY + doorHeight * 0.55;
+    const hingeEdgeX = hingeOnLeft ? x : x + width;
+    const strikeEdgeX = hingeOnLeft ? x + width : x;
+    const hingeOutsideX = hingeOnLeft ? hingeEdgeX - 10 : hingeEdgeX + 10;
+    const hingePositions = [doorY + 28, doorY + doorHeight / 2 - 5, doorY + doorHeight - 38];
+    const hingeBlockWidth = clearance + 6;
+    const hingeBlockX = hingeOnLeft ? x - clearance : x + width - 2;
+    const liteWidth = Math.min(width * 0.4, 60);
+    const liteHeight = Math.min(doorHeight * 0.45, 90);
+    const liteX = x + width / 2 - liteWidth / 2;
+    const liteY = doorY + doorHeight * 0.2;
+    const kickHeight = 26;
+    const baseCloserWidth = 34;
+    const baseCloserHeight = 10;
+    const closerScale = hasAutoOperator ? 1.2 : 1;
+    const closerBodyWidth = baseCloserWidth * closerScale;
+    const closerBodyHeight = baseCloserHeight * closerScale;
+    const closerBodyX = hingeOnLeft ? x + 6 : x + width - closerBodyWidth - 6;
+    const closerBodyY = doorY + 4;
+    const pivotX = hingeOnLeft ? closerBodyX + 4 : closerBodyX + closerBodyWidth - 4;
+    const pivotY = closerBodyY + closerBodyHeight / 2;
+    const trackThickness = 4;
+    const jambInnerEdge = hingeOnLeft ? innerX : innerX + innerWidth;
+    const verticalTrackX = hingeOnLeft ? jambInnerEdge - trackThickness : jambInnerEdge;
+    const headAttachY = frameY + frameThickness / 2;
+    const headAttachX = hingeOnLeft ? verticalTrackX + trackThickness : verticalTrackX;
+    const horizontalTrackX = Math.min(pivotX, headAttachX);
+    const horizontalTrackWidth = Math.max(6, Math.abs(pivotX - headAttachX));
+    let hingeVisual = 'butt';
+    if (hingeDescriptor.includes('continuous')) hingeVisual = 'continuous';
+    else if (hingeDescriptor.includes('concealed')) hingeVisual = 'concealed';
+    else if (hingeDescriptor.includes('pivot')) hingeVisual = 'pivot';
+    else if (hingeDescriptor.includes('patch')) hingeVisual = 'patch';
+    else if (hingeDescriptor.includes('butt')) hingeVisual = 'butt';
+    if (!hingeItems.length && isGlass) hingeVisual = 'patch';
+    if (isGlass && hingeVisual !== 'patch') hingeVisual = 'patch';
+    if (!isGlass && hingeVisual === 'patch') hingeVisual = 'butt';
+
+    const renderHinges = () => {
+      if (hingeVisual === 'continuous') {
+        const stripX = hingeOnLeft ? x - 1 : x + width - 3;
+        return (
+          <g>
+            <rect x={stripX} y={doorY + 6} width="4" height={doorHeight - 12} rx="2" fill="#cbd4de" stroke="#7b8596" strokeWidth="0.8" />
+            {[doorY + 20, doorY + doorHeight / 2, doorY + doorHeight - 20].map((y, idx) => (
+              <circle key={`continuous-screw-${idx}`} cx={stripX + 2} cy={y} r="1.5" fill="#7b8596" />
+            ))}
+          </g>
+        );
+      }
+      if (hingeVisual === 'pivot') {
+        const plateX = hingeOnLeft ? x - 4 : x + width - 4;
+        const rodX = hingeOnLeft ? x - 0.5 : x + width - 1.5;
+        return (
+          <g>
+            <rect x={plateX} y={doorY - 4} width="8" height="8" rx="1" fill="#cfd4de" stroke="#6b7280" strokeWidth="0.8" />
+            <circle cx={plateX + 4} cy={doorY} r="1.5" fill="#7b8596" />
+            <rect x={plateX} y={doorY + doorHeight - 4} width="8" height="8" rx="1" fill="#cfd4de" stroke="#6b7280" strokeWidth="0.8" />
+            <circle cx={plateX + 4} cy={doorY + doorHeight} r="1.5" fill="#7b8596" />
+            <rect x={rodX} y={doorY + 8} width="2" height={doorHeight - 16} fill="#94a3b8" />
+          </g>
+        );
+      }
+
+      const positions = hingeVisual === 'patch' ? [hingePositions[0], hingePositions[hingePositions.length - 1]] : hingePositions;
+      return positions.map((pos, idx) => {
+        if (hingeVisual === 'concealed') {
+          const concealedX = hingeOnLeft ? x : x + width - 6;
+          return (
+            <rect
+              key={`concealed-${idx}`}
+              x={concealedX}
+              y={pos - 1}
+              width="6"
+              height="12"
+              rx="1"
+              fill="#dfe3ec"
+              stroke="#7b8596"
+              strokeWidth="0.6"
+            />
+          );
+        }
+        if (hingeVisual === 'patch') {
+          const patchX = hingeOnLeft ? x - 3 : x + width - 7;
+          return (
+            <rect
+              key={`patch-${idx}`}
+              x={patchX}
+              y={pos - 4}
+              width="10"
+              height="16"
+              rx="2"
+              fill="#94a3b8"
+              stroke="#475569"
+              strokeWidth="0.8"
+            />
+          );
+        }
+        // Default butt hinge
+        const buttX = hingeBlockX + (hingeBlockWidth - 6) / 2;
+        return (
+          <g key={`hinge-${idx}`}>
+            <rect
+              x={buttX}
+              y={pos - 1.5}
+              width={6}
+              height="13"
+              rx="2"
+              fill="#cfd4de"
+              stroke="#8b93a5"
+              strokeWidth="0.8"
+            />
+            {[2.5, 6.5, 10.5].map((offset) => (
+              <line
+                key={`knuckle-line-${idx}-${offset}`}
+                x1={buttX}
+                x2={buttX + 6}
+                y1={pos - 1.5 + offset}
+                y2={pos - 1.5 + offset}
+                stroke="#9aa5b6"
+                strokeWidth="0.6"
+              />
+            ))}
+          </g>
+        );
+      });
+    };
+
     return (
-      <g transform={`translate(${x}, 0)`}>
-        {/* Door Slab */}
-        <rect x="5" y="5" width="90" height="190" fill={doorFill} stroke={doorStroke} strokeWidth="2" />
-        
-        {/* Lite Kit Frame */}
-        {hasVision && !isGlass && (
-             <rect x="25" y="30" width="40" height="80" fill="#e0f2fe" stroke="#333" strokeWidth="1" />
+      <g>
+        {isAluminum ? (
+          <>
+            <rect
+              x={x}
+              y={doorY}
+              width={width}
+              height={doorHeight}
+              rx="3"
+              fill="#cbd5e1"
+              stroke="#6b7280"
+              strokeWidth="2"
+            />
+            <rect
+              x={x + width * 0.1}
+              y={doorY + doorHeight * 0.1}
+              width={width * 0.8}
+              height={doorHeight * 0.8}
+              rx="2"
+              fill="rgba(224,242,254,0.9)"
+              stroke="#93c5fd"
+              strokeWidth="1.5"
+            />
+          </>
+        ) : (
+          <rect x={x} y={doorY} width={width} height={doorHeight} rx={isGlass ? 4 : 2} fill={doorFill} stroke={doorStroke} strokeWidth="1.5" />
         )}
-        
-        {/* Louver (if implied or added) - Visual placeholder if needed, e.g. Metal doors often have louvers at bottom */}
-        {isMetal && !hasVision && (
-             <g transform="translate(15, 140)">
-                 <rect x="0" y="0" width="60" height="30" fill="none" stroke="#666" />
-                 <line x1="0" y1="5" x2="60" y2="5" stroke="#666" />
-                 <line x1="0" y1="10" x2="60" y2="10" stroke="#666" />
-                 <line x1="0" y1="15" x2="60" y2="15" stroke="#666" />
-                 <line x1="0" y1="20" x2="60" y2="20" stroke="#666" />
-                 <line x1="0" y1="25" x2="60" y2="25" stroke="#666" />
-             </g>
+        {isTimber && !isAluminum && [0.2, 0.5, 0.8].map((pct, idx) => (
+          <line key={`grain-${idx}`} x1={x + width * pct} x2={x + width * pct} y1={doorY + 6} y2={doorY + doorHeight - 6} stroke="rgba(255,255,255,0.3)" strokeWidth="1" />
+        ))}
+        {!isTimber && !isGlass && !isAluminum && (
+          <rect x={x + 4} y={doorY + 6} width={width - 8} height={doorHeight - 12} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="1" />
         )}
-
-        {/* Astragal for Double Doors (Inactive Leaf) */}
-        {isInactive && isDouble && (
-            <rect x={leafHinge === 'left' ? 88 : 0} y="5" width="4" height="190" fill="#666" />
+        {isGlass && (
+          <>
+            <rect x={x} y={doorY} width={width} height={14} fill="#cbd5e1" opacity="0.6" />
+            <rect x={x} y={doorY + doorHeight - 14} width={width} height={14} fill="#cbd5e1" opacity="0.6" />
+          </>
         )}
-        
-        {/* Hinge Visuals (3 standard) */}
-        <rect x={leafHinge === 'left' ? 3 : 93} y="20" width="4" height="8" fill="#999" />
-        <rect x={leafHinge === 'left' ? 3 : 93} y="95" width="4" height="8" fill="#999" />
-        <rect x={leafHinge === 'left' ? 3 : 93} y="170" width="4" height="8" fill="#999" />
-
-        {/* Closer Body & Arm */}
-        {hasCloser && !isFloorSpring && !isInactive && (
-          <g transform={leafHinge === 'left' ? "translate(10, 10)" : "translate(50, 10)"}>
-            <rect x="0" y="0" width="30" height="10" fill="#374151" rx="2" />
-            <path d={leafHinge === 'left' ? "M 15 5 L 45 25" : "M 15 5 L -15 25"} stroke="#374151" strokeWidth="3" strokeLinecap="round" />
+        <rect x={hingeOnLeft ? x : x + width - hingeStripWidth} y={doorY} width={hingeStripWidth} height={doorHeight} fill="rgba(0,0,0,0.08)" />
+        <rect x={hingeOnLeft ? x + width - lockStripWidth : x} y={doorY} width={lockStripWidth} height={doorHeight} fill={panelHighlight} opacity="0.35" />
+        {hasVision && !isGlass && !isAluminum && (
+          <rect x={liteX} y={liteY} width={liteWidth} height={liteHeight} fill="#e0f2fe" stroke="#64748b" strokeWidth="1" rx="2" />
+        )}
+        {hasLouver && !hasVision && (
+          <g opacity="0.65">
+            <rect x={x + 10} y={doorY + doorHeight - kickHeight - 12} width={width - 20} height={kickHeight} fill="none" stroke="#6b7280" />
+            {[5, 11, 17, 23].map((offset) => (
+              <line key={`louver-${offset}`} x1={x + 12} x2={x + width - 12} y1={doorY + doorHeight - kickHeight - 12 + offset} y2={doorY + doorHeight - kickHeight - 12 + offset} stroke="#6b7280" />
+            ))}
           </g>
         )}
-
-        {/* Lock/Handle Area */}
-        <g transform={`translate(${handleX}, 100)`}>
-          {hasPanic ? (
-            <rect x={leafHinge === 'left' ? -5 : -65} y="-5" width="70" height="12" rx="1" fill="#cbd5e1" stroke="#475569" />
-          ) : hasPull ? (
-             <rect x="-2" y="-20" width="4" height="40" rx="2" fill="#64748b" />
-          ) : (
+        {isInactive && isDouble && (
+          <rect x={hingeOnLeft ? x + width - 3 : x} y={doorY} width="3" height={doorHeight} fill={hardwareColor} opacity="0.4" />
+        )}
+        {isDouble && hasFlushBolt && isInactive && (
+          <>
+            <rect x={strikeEdgeX - 2} y={doorY + 10} width="4" height="16" rx="1" fill={hingeOutline} />
+            <rect x={strikeEdgeX - 2} y={doorY + doorHeight - 26} width="4" height="16" rx="1" fill={hingeOutline} />
+          </>
+        )}
+        {hasViewer && !isGlass && !isInactive && (
+          <circle cx={x + width / 2} cy={doorY + 36} r="3" fill="#dbeafe" stroke={hardwareColor} strokeWidth="0.8" />
+        )}
+        {renderHinges()}
+        {hasSurfaceCloser && !isInactive && (
+          <g>
+            <rect
+              x={closerBodyX}
+              y={closerBodyY}
+              width={closerBodyWidth}
+              height={closerBodyHeight}
+              rx="2"
+              fill={closerColor}
+              stroke={hingeOutline}
+              strokeWidth="1"
+            />
+            <rect
+              x={headAttachX - 2}
+              y={headAttachY - 5}
+              width="4"
+              height="10"
+              rx="1"
+              fill={closerColor}
+              stroke={hingeOutline}
+              strokeWidth="0.5"
+            />
+            <circle cx={pivotX} cy={pivotY} r="2" fill={hingeOutline} />
+          </g>
+        )}
+        {hasFloorSpring && !isInactive && (
+          <rect
+            x={hingeOnLeft ? x + 6 : x + width - 40}
+            y={doorY + doorHeight - 10}
+            width="34"
+            height="7"
+            rx="2.5"
+            fill={floorCloserColor}
+            stroke={hingeOutline}
+            strokeWidth="1"
+          />
+        )}
+        {hasPanic ? (
+          <rect x={x + 12} y={handleCenterY - 6} width={width - 24} height="12" rx="3" fill="#cbd5e1" stroke={hardwareColor} strokeWidth="1" />
+        ) : hasPullHandle ? (
+          <rect x={handleCenterX - 2} y={handleCenterY - 20} width="4" height="40" rx="2" fill={hardwareColor} />
+        ) : hasPushPlate ? (
+          <rect x={handleCenterX - 20} y={handleCenterY - 30} width="40" height="60" rx="4" fill="#e5e7eb" stroke={hardwareColor} strokeWidth="1" />
+        ) : (
+          <g>
+            <circle cx={handleCenterX} cy={handleCenterY} r="6" fill="#e2e8f0" stroke={hardwareColor} strokeWidth="1" />
+            {hasLeverHandle ? (
+              <rect x={hingeOnLeft ? handleCenterX - 16 : handleCenterX + 4} y={handleCenterY - 2} width="14" height="4" rx="2" fill={hardwareColor} />
+            ) : (
+              <circle cx={hingeOnLeft ? handleCenterX - 8 : handleCenterX + 8} cy={handleCenterY} r="2.5" fill={hardwareColor} />
+            )}
+          </g>
+        )}
+        {hasKick && (
+          <rect x={x + 10} y={doorY + doorHeight - 30} width={width - 20} height="24" fill="#9ca3af" opacity="0.7" stroke={hardwareColor} strokeWidth="1" />
+        )}
+        {hasDropSeal && (
+          <rect x={x + 6} y={doorY + doorHeight - 5} width={width - 12} height="3" rx="1.5" fill="#94a3b8" />
+        )}
+        {hasDoorStop && !isInactive && (
+          stopPlacement === 'floor' ? (
             <g>
-                {/* Rose & Lever */}
-                <circle cx="0" cy="0" r="6" fill="#e2e8f0" stroke="#64748b" strokeWidth="1"/> 
-                <rect x={leafHinge === 'left' ? -14 : 2} y="-3" width="12" height="6" fill="#64748b" rx="2"/>
+              <rect x={hingeOutsideX - 4} y={floorLineY - 5} width="8" height="2" fill="#6b7280" />
+              <circle cx={hingeOutsideX} cy={floorLineY - 7} r="3" fill="#e2e8f0" stroke="#6b7280" strokeWidth="0.8" />
             </g>
-          )}
-        </g>
-        
-        {/* Protection Plate */}
-        {hasKick && <rect x="10" y="165" width="80" height="25" fill="#9ca3af" opacity="0.5" stroke="#4b5563" />}
-
-        {/* Threshold/Sweep at bottom */}
-        <rect x="5" y="193" width="90" height="4" fill="#333" />
-
+          ) : (
+            <rect
+              x={hingeOutsideX - 2}
+              y={handleCenterY - 6}
+              width="4"
+              height="12"
+              rx="2"
+              fill="#cbd5e1"
+              stroke={hingeOutline}
+              strokeWidth="0.6"
+            />
+          )
+        )}
       </g>
     );
   };
 
   return (
     <div className="flex flex-col items-center">
-      <svg width="240" height="260" viewBox="0 0 240 260" className="bg-white rounded-lg border border-gray-100 shadow-sm p-2">
-        {/* Frame Head */}
-        <rect x="0" y="0" width={isDouble ? 240 : 130} height="200" fill="none" stroke={frameColor} strokeWidth="6" />
-        {/* Frame Jambs are implied by stroke */}
+      <svg
+        width={isDouble ? 320 : 240}
+        height="320"
+        viewBox={`0 0 ${viewWidth} ${viewHeight}`}
+        className="bg-white rounded-lg border border-gray-100 shadow-sm p-2"
+      >
+        {/* Frame head and jambs */}
+        <rect x={frameX} y={frameY} width={frameThickness} height={frameHeight} fill={frameColor} stroke={frameShadow} strokeWidth="1" />
+        <rect x={frameX + frameWidth - frameThickness} y={frameY} width={frameThickness} height={frameHeight} fill={frameColor} stroke={frameShadow} strokeWidth="1" />
+        <rect x={frameX} y={frameY} width={frameWidth} height={frameThickness} fill={frameColor} stroke={frameShadow} strokeWidth="1" />
+        <rect x={innerX} y={innerY} width={innerWidth} height={innerHeight} fill={wallFill} stroke={frameShadow} strokeWidth="0.5" />
         
-        {isDouble ? (
-            <>
-                <DoorLeaf x={15} leafHanding="LH" isInactive={true} />
-                <DoorLeaf x={115} leafHanding="RH" />
-            </>
-        ) : (
-            <DoorLeaf x={15} leafHanding={handing.includes('L') ? 'LH' : 'RH'} />
+        {isDouble && (
+          <rect x={innerX + clearance + doubleLeafWidth} y={doorY} width={meetingGap} height={doorHeight} fill={wallFill} />
         )}
+
+        {isDouble ? (
+          <>
+            <DoorLeaf x={innerX + clearance} width={doubleLeafWidth} leafHanding="LH" isInactive />
+            <DoorLeaf x={innerX + clearance + doubleLeafWidth + meetingGap} width={doubleLeafWidth} leafHanding="RH" />
+          </>
+        ) : (
+          <DoorLeaf x={innerX + clearance} width={singleLeafWidth} leafHanding={handing.includes('L') ? 'LH' : 'RH'} />
+        )}
+
+        {hasThreshold && (
+          <rect x={innerX + clearance / 2} y={floorLineY - 5} width={innerWidth - clearance} height="3" rx="1.5" fill="#b0bec5" />
+        )}
+
+        <line x1={frameX} y1={floorLineY} x2={frameX + frameWidth} y2={floorLineY} stroke="#111827" strokeWidth="2.5" strokeLinecap="round" />
       </svg>
       <div className="mt-2 text-xs text-gray-500 font-medium text-center">
         {door.config} {door.material} <br/>
@@ -1558,6 +1850,8 @@ const App = () => {
                   <div className="flex-1 overflow-y-auto p-4 md:p-6">
                     {getProj().sets.map(s => {
                         const repDoor = getProj().doors.find(d => s.doors.includes(d.id));
+                        const doorsInSet = getProj().doors.filter(d => s.doors.includes(d.id));
+                        const isGlassOnlySet = doorsInSet.length > 0 && doorsInSet.every(d => d.material === 'Glass');
                         return (
                       <div key={s.id} className="mb-12">
                         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-2">
@@ -1600,8 +1894,29 @@ const App = () => {
                                                     const originalIndex = s.items.indexOf(item);
                                                     const cat = item.category || "Hinges";
                                                     const catData = PRODUCT_CATALOG[cat];
-                                                    const styles = catData?.types.find(t => t.name === item.type)?.styles || [];
                                                     const finishes = FINISHES[getProj().standard];
+                                                    let typeOptions = catData?.types || [];
+                                                    if (cat === 'Hinges') {
+                                                        if (isGlassOnlySet) typeOptions = typeOptions.filter(t => t.name === 'Patch Fitting');
+                                                        else typeOptions = typeOptions.filter(t => t.name !== 'Patch Fitting');
+                                                    }
+                                                    let effectiveType = item.type;
+                                                    if (cat === 'Hinges' && userRole !== 'Owner') {
+                                                        if (isGlassOnlySet && effectiveType !== 'Patch Fitting') {
+                                                            const desired = 'Patch Fitting';
+                                                            if (typeOptions.some(t => t.name === desired)) {
+                                                                setTimeout(() => updateSetItem(s.id, originalIndex, 'type', desired), 0);
+                                                                effectiveType = desired;
+                                                            }
+                                                        } else if (!isGlassOnlySet && effectiveType === 'Patch Fitting') {
+                                                            const fallback = typeOptions[0]?.name;
+                                                            if (fallback && fallback !== effectiveType) {
+                                                                setTimeout(() => updateSetItem(s.id, originalIndex, 'type', fallback), 0);
+                                                                effectiveType = fallback;
+                                                            }
+                                                        }
+                                                    }
+                                                    const styles = (catData?.types.find(t => t.name === effectiveType) || { styles: [] }).styles || [];
 
                                                     return (
                                                         <div key={idx} className="grid grid-cols-[30px_60px_60px_140px_140px_100px_1fr_60px_40px] border-b border-gray-100 p-2 items-center hover:bg-gray-50 relative">
@@ -1611,7 +1926,7 @@ const App = () => {
                                                                 <>
                                                                     <div className="text-sm font-medium text-gray-900">{item.ref}</div>
                                                                     <div className="text-xs text-gray-400">{catData?.csi || ""}</div>
-                                                                    <div className="text-sm text-gray-600">{item.type}</div>
+                                                                    <div className="text-sm text-gray-600">{effectiveType}</div>
                                                                     <div className="text-sm text-gray-600">{item.style}</div>
                                                                     <div className="text-sm text-gray-600">{item.finish}</div>
                                                                     <div className="text-sm text-gray-500">{item.spec}</div>
@@ -1622,8 +1937,8 @@ const App = () => {
                                                                 <>
                                                                     <input type="text" value={item.ref} onChange={(e) => updateSetItem(s.id, originalIndex, 'ref', e.target.value)} className="w-full p-1 border rounded text-xs" />
                                                                     <div className="text-xs text-gray-400">{catData?.csi || ""}</div>
-                                                                    <select value={item.type} onChange={(e) => updateSetItem(s.id, originalIndex, 'type', e.target.value)} className="w-full p-1 border rounded text-xs bg-white">
-                                                                        {catData?.types.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
+                                                                    <select value={effectiveType} onChange={(e) => updateSetItem(s.id, originalIndex, 'type', e.target.value)} className="w-full p-1 border rounded text-xs bg-white">
+                                                                        {typeOptions.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
                                                                     </select>
                                                                     <select value={item.style} onChange={(e) => updateSetItem(s.id, originalIndex, 'style', e.target.value)} className="w-full p-1 border rounded text-xs bg-white">
                                                                         {styles.map(st => <option key={st} value={st}>{st}</option>)}
