@@ -18,6 +18,18 @@ const generateId = () => {
 
 const formatDate = (date) => new Date(date).toLocaleString();
 
+const generateUniqueMark = (doors = [], base = "D-001") => {
+  const existing = new Set(doors.map((d) => d.mark));
+  if (!existing.has(base)) return base;
+  let idx = 2;
+  let candidate = `${base}-${String(idx).padStart(2, '0')}`;
+  while (existing.has(candidate)) {
+    idx += 1;
+    candidate = `${base}-${String(idx).padStart(2, '0')}`;
+  }
+  return candidate;
+};
+
 // --- CONSTANTS & DATA ---
 
 const FACILITY_DATA = {
@@ -47,12 +59,31 @@ const ACOUSTIC_RECOMMENDATIONS = {
     "Server / IT": 40, "Guest Room Entry": 35, "Unit Entrance (Fire Rated)": 35, "Restroom": 30
 };
 
+const DOOR_MATERIALS = ["Timber", "Metal", "Glass", "Aluminum"];
+const DOOR_CONFIGS = ["Single", "Double"];
+const HANDING_OPTIONS = ["LH", "RH", "LHR", "RHR"];
+const UNIQUE_DOOR_USES = Array.from(
+  new Set(
+    Object.values(FACILITY_DATA).flatMap((facility) => facility.usages)
+  )
+);
+const POSSIBLE_DOOR_SET_COMBINATIONS =
+  UNIQUE_DOOR_USES.length *
+  DOOR_MATERIALS.length *
+  DOOR_CONFIGS.length *
+  HANDING_OPTIONS.length;
+const HERO_STATS = [
+  { label: "Door Set Profiles", value: POSSIBLE_DOOR_SET_COMBINATIONS.toLocaleString() },
+  { label: "Modeled Use Cases", value: UNIQUE_DOOR_USES.length.toString() },
+  { label: "Export Formats", value: "BIM • PDF • XLSX" }
+];
+
 // BHMA Categorization Helper
 const BHMA_CATEGORIES = {
     "Hanging": ["Hinges"],
-    "Securing": ["Locks", "Cylinders", "Accessories"], // Flush bolts in accessories
-    "Controlling": ["Closers", "Stops", "Handles"], // Handles control latch
-    "Protecting": ["Seals", "Accessories"] // Kick plates in accessories
+    "Securing": ["Locks", "Cylinders", "Accessories", "Electrified"],
+    "Controlling": ["Closers", "Stops", "Handles"],
+    "Protecting": ["Seals", "Accessories"]
 };
 
 const getBHMACategory = (cat) => {
@@ -115,6 +146,9 @@ const PRODUCT_CATALOG = {
     types: [
       { name: "Drop Seal", styles: ["Mortised", "Surface Mounted"] },
       { name: "Perimeter Seal", styles: ["Batwing", "Bulb", "Brush"] },
+      { name: "Acoustic Perimeter Seal", styles: ["STC-40 Compression", "STC-45 Magnetic"] },
+      { name: "Automatic Door Bottom", styles: ["Acoustic Drop", "Medium Duty"] },
+      { name: "Vision/Louver Gasket", styles: ["High Density", "Intumescent Acoustic"] },
       { name: "Threshold", styles: ["Low Profile (ADA)", "Saddle", "Panic Type"] }
     ]
   },
@@ -131,12 +165,364 @@ const PRODUCT_CATALOG = {
           { name: "Kick Plate", styles: ["Satin Stainless", "Polished Stainless", "Brass"] },
           { name: "Flush Bolt", styles: ["Lever Action", "Slide Action"] }
       ]
+  },
+  "Electrified": {
+      csi: "08 74 00",
+      types: [
+          { name: "Magnetic Lock", styles: ["Fail-Safe", "Fail-Secure"], requiresRelease: true },
+          { name: "Electric Strike", styles: ["Fail-Safe", "Fail-Secure"], requiresTrim: true },
+          { name: "Electromechanical Mortise", styles: ["Fail-Safe", "Fail-Secure"], requiresTrim: true },
+          { name: "Door Contact", styles: ["Surface", "Recessed"] },
+          { name: "Push Button", styles: ["Request-to-Exit", "Emergency"] },
+          { name: "Power Supply", styles: ["12/24V Auto", "Dedicated"] }
+      ]
   }
+};
+
+const LOCK_TYPE_RULES = {
+  Timber: ["Mortise Lock", "Cylindrical Lock", "Panic Bar", "Electric Strike", "Magnetic Lock"],
+  Metal: ["Mortise Lock", "Panic Bar", "Electric Strike", "Magnetic Lock"],
+  Aluminum: ["Mortise Lock", "Electric Strike", "Magnetic Lock"],
+  Glass: ["Patch Lock", "Panic Bar", "Magnetic Lock"],
+  default: ["Mortise Lock", "Cylindrical Lock", "Panic Bar", "Electric Strike", "Magnetic Lock"]
+};
+
+const getAllowedLockTypesForMaterials = (materials = []) => {
+  if (!materials.length) return LOCK_TYPE_RULES.default;
+  let allowed = null;
+  materials.forEach((mat) => {
+    const rules = LOCK_TYPE_RULES[mat] || LOCK_TYPE_RULES.default;
+    if (allowed === null) allowed = new Set(rules);
+    else allowed = new Set([...allowed].filter((type) => rules.includes(type)));
+  });
+  if (!allowed || allowed.size === 0) return LOCK_TYPE_RULES.default;
+  return Array.from(allowed);
+};
+
+const ELECTRIFIED_TYPE_RULES = {
+  Timber: ["Magnetic Lock", "Electric Strike"],
+  Metal: ["Magnetic Lock", "Electric Strike", "Electromechanical Mortise"],
+  Aluminum: ["Magnetic Lock", "Electric Strike"],
+  Glass: ["Magnetic Lock"],
+  default: ["Magnetic Lock", "Electric Strike"]
+};
+
+const getAllowedElectrifiedTypesForMaterials = (materials = []) => {
+  if (!materials.length) return ELECTRIFIED_TYPE_RULES.default;
+  let allowed = null;
+  materials.forEach((mat) => {
+    const rules = ELECTRIFIED_TYPE_RULES[mat] || ELECTRIFIED_TYPE_RULES.default;
+    if (allowed === null) allowed = new Set(rules);
+    else allowed = new Set([...allowed].filter((type) => rules.includes(type)));
+  });
+  if (!allowed || allowed.size === 0) return ELECTRIFIED_TYPE_RULES.default;
+  return Array.from(allowed);
+};
+
+const ESCAPE_ROUTE_KEYWORDS = ["stair", "exit", "corridor", "assembly", "classroom", "retail", "auditorium", "public", "egress"];
+const PANIC_REQUIRED_KEYWORDS = ["stair", "exit", "assembly", "auditorium", "arena", "stadium", "retail", "public"];
+const ELECTRIFIED_USE_HINTS = ["main entrance", "security", "server", "it", "data", "lab", "lobby", "reception", "turnstile", "access", "checkpoint"];
+
+const HARDWARE_PACKAGE_OPTIONS = [
+  { id: "Mechanical", label: "Mechanical Package", desc: "Mortise/cylindrical locks, manual key control, free-egress lever trim." },
+  { id: "Electromechanical", label: "Electromechanical Package", desc: "Electric strikes or maglocks with power, REX, and monitoring accessories." }
+];
+
+const getRecommendedHardwareIntent = (door = {}) => {
+  const use = (door.use || "").toLowerCase();
+  const notes = (door.notes || "").toLowerCase();
+  const hasKeyword = ELECTRIFIED_USE_HINTS.some((kw) => use.includes(kw));
+  const hasNote = ["card", "access", "controlled", "turnstile"].some((kw) => notes.includes(kw));
+  return hasKeyword || hasNote ? "Electromechanical" : "Mechanical";
+};
+
+const normalizeDoor = (door) => {
+  const additional = (door.additionalLocations || []).map((loc) => ({
+    zone: loc?.zone || door.zone || "",
+    level: loc?.level || door.level || "",
+    roomName: loc?.roomName || door.roomName || ""
+  }));
+  const qtyComputed = 1 + additional.length;
+  return {
+    ...door,
+    use: door.use || door.roomName || "",
+    hardwareIntent: door.hardwareIntent || getRecommendedHardwareIntent(door),
+    additionalLocations: additional,
+    qty: qtyComputed,
+    thicknessAuto: door.thicknessAuto !== false,
+    weightAuto: door.weightAuto !== false,
+    ada: door.ada === true
+  };
+};
+
+const classifyDoor = (door) => {
+  const use = (door.use || "").toLowerCase();
+  const material = door.material || "Timber";
+  const isEscapeRoute = ESCAPE_ROUTE_KEYWORDS.some((kw) => use.includes(kw));
+  const requiresPanic = PANIC_REQUIRED_KEYWORDS.some((kw) => use.includes(kw));
+  const isFireRated = parseInt(door.fire, 10) > 0;
+  const hardwareIntent = door.hardwareIntent || getRecommendedHardwareIntent(door);
+  return {
+    material,
+    isEscapeRoute,
+    requiresPanic,
+    isFireRated,
+    requiresFailSafe: isEscapeRoute || isFireRated,
+    hardwareIntent
+  };
+};
+
+const buildSetProfile = (doors = []) => {
+  if (!doors.length) return { materials: ["Timber"], isEscapeRoute: false, requiresPanic: false, isFireRated: false, requiresFailSafe: false, requiresADA: false };
+  const profiles = doors.map(classifyDoor);
+  const hardwareIntents = Array.from(new Set(profiles.map((p) => p.hardwareIntent || "Mechanical")));
+  return {
+    materials: Array.from(new Set(profiles.map((p) => p.material))),
+    isEscapeRoute: profiles.some((p) => p.isEscapeRoute),
+    requiresPanic: profiles.some((p) => p.requiresPanic),
+    isFireRated: profiles.some((p) => p.isFireRated),
+    requiresFailSafe: profiles.some((p) => p.requiresFailSafe),
+    requiresADA: doors.some((d) => d.ada),
+    packageIntent: hardwareIntents.includes("Electromechanical") ? "Electromechanical" : "Mechanical"
+  };
+};
+
+const getSetWarnings = (set, profile) => {
+  const warnings = [];
+  const locks = set.items.filter((i) => i.category === "Locks");
+  const electrified = set.items.filter((i) => i.category === "Electrified");
+  const handles = set.items.filter((i) => i.category === "Handles");
+  const panicDevices = locks.filter((i) => (i.type || "").toLowerCase().includes("panic"));
+  const magLocks = [...locks, ...electrified].filter((i) => (i.type || "").toLowerCase().includes("magnetic"));
+  const electricStrikes = [...locks, ...electrified].filter((i) => (i.type || "").toLowerCase().includes("electric strike"));
+  const hasTrueElectrified = magLocks.length > 0 || electrified.some((i) => !MAGLOCK_SUPPORT_TYPES.includes(i.type));
+
+  if (profile.requiresPanic && panicDevices.length === 0) {
+    warnings.push("Panic hardware is required for this escape route door (EN 1125 / NFPA 101).");
+  }
+  if (panicDevices.length > 0 && handles.length > 0) {
+    warnings.push("Remove lever/pull trim on the egress side when panic hardware is used to maintain single-motion exit.");
+  }
+  if (panicDevices.length > 0 && locks.some((i) => !i.type.toLowerCase().includes("panic"))) {
+    warnings.push("Panic hardware should be the sole locking mechanism on the egress side.");
+  }
+  if (magLocks.length > 0) {
+    const missingComponents = MAGLOCK_SUPPORT_TYPES.filter(
+      (supportType) => !electrified.some((i) => (i.type || "").toLowerCase() === supportType.toLowerCase())
+    );
+    if (missingComponents.length > 0) {
+      warnings.push(
+        `Magnetic locks require a release package (REX sensor, emergency button, fire alarm interface). Missing: ${missingComponents.join(", ")}.`
+      );
+    }
+    const hasFailSecureMag = magLocks.some((i) => (i.style || "").toLowerCase().includes("fail-secure"));
+    if (profile.requiresFailSafe && hasFailSecureMag) warnings.push("Escape route doors must use fail-safe magnetic locks.");
+  }
+  if (
+    electricStrikes.length > 0 &&
+    !locks.some((l) => {
+      const descriptor = (l.type || "").toLowerCase();
+      return descriptor.includes("mortise") || descriptor.includes("cylindrical") || descriptor.includes("panic");
+    })
+  ) {
+    warnings.push("Electric strikes must pair with a mortise/cylindrical latch or panic device that provides the latch bolt.");
+  }
+  if (profile.packageIntent === "Electromechanical" && !hasTrueElectrified) {
+    warnings.push("Door was scheduled as an electrified package but no electrified locking has been added.");
+  }
+  if (profile.packageIntent === "Mechanical" && hasTrueElectrified) {
+    warnings.push("Door was scheduled as a mechanical package; confirm electrified hardware is intentional.");
+  }
+  if (profile.requiresADA) {
+    const hasAccessibleTrim = panicDevices.length > 0 || handles.some((h) => (h.type || "").toLowerCase().includes("lever"));
+    if (!hasAccessibleTrim) {
+      warnings.push("ADA-labeled doors require lever hardware or panic devices that allow single-hand operation.");
+    }
+  }
+  return warnings;
 };
 
 const FINISHES = {
   "ANSI": ["630 (Satin Stainless)", "629 (Polished Stainless)", "626 (Satin Chrome)", "605 (Polished Brass)", "613 (Oil Rubbed Bronze)", "622 (Matte Black)"],
   "EN": ["SSS (Satin Stainless)", "PSS (Polished Stainless)", "SAA (Satin Anodized)", "PB (Polished Brass)", "RAL 9005 (Black)", "RAL 9016 (White)"]
+};
+
+const CATEGORY_REF_PREFIX = {
+  Hinges: "H",
+  Locks: "L",
+  Closers: "D",
+  Handles: "H",
+  Stops: "S",
+  Seals: "GS",
+  Cylinders: "C",
+  Accessories: "A",
+  Electrified: "E"
+};
+
+const getDefaultFinishForStandard = (standard = "ANSI") => {
+  const finishSet = FINISHES[standard] || FINISHES["ANSI"];
+  return finishSet?.[0] || "630 (Satin Stainless)";
+};
+
+const getTypeDefaultStyle = (category, type) => {
+  const catData = PRODUCT_CATALOG[category];
+  const entry = catData?.types.find((t) => t.name === type);
+  return entry?.styles?.[0] || "";
+};
+
+const getNextRefForCategory = (items = [], category) => {
+  const prefix = CATEGORY_REF_PREFIX[category] || "X";
+  let index = 1;
+  const existing = new Set(items.map((item) => item.ref));
+  let candidate = `${prefix}${String(index).padStart(2, "0")}`;
+  while (existing.has(candidate)) {
+    index += 1;
+    candidate = `${prefix}${String(index).padStart(2, "0")}`;
+  }
+  return candidate;
+};
+
+const MAGLOCK_SUPPORT_ITEMS = [
+  { type: "Door Contact", style: "Surface", spec: "Status monitor contact", qty: "1" },
+  { type: "Push Button", style: "Request-to-Exit", spec: "Illuminated REX button", qty: "1" },
+  { type: "Power Supply", style: "12/24V Auto", spec: "Fail-safe rated supply", qty: "1" }
+];
+
+const MAGLOCK_SUPPORT_TYPES = MAGLOCK_SUPPORT_ITEMS.map((item) => item.type);
+const ACOUSTIC_THRESHOLD = 40;
+const doorsInlined = (config) => (config === 'Double' ? 'double leaf' : 'single leaf');
+const ADA_MIN_CLEAR_OPENING_MM = 813;
+const ADA_CLEARANCE_DEDUCTION_MM = 38; // approx. 1.5" allowance for hinges/handles
+
+const ensureMaglockSupportItems = (items = [], standard = "ANSI") => {
+  const finish = getDefaultFinishForStandard(standard);
+  const hasMaglock = items.some((item) => (item.type || "").toLowerCase().includes("magnetic lock"));
+  let updatedItems = items.filter((item) => (item.type || "").toLowerCase() !== "maglock release package");
+  if (hasMaglock) {
+    MAGLOCK_SUPPORT_ITEMS.forEach((kit) => {
+      const exists = updatedItems.some((item) => item.category === "Electrified" && item.type === kit.type);
+      if (!exists) {
+        updatedItems.push({
+          category: "Electrified",
+          ref: getNextRefForCategory(updatedItems, "Electrified"),
+          type: kit.type,
+          style: kit.style || getTypeDefaultStyle("Electrified", kit.type),
+          spec: kit.spec,
+          qty: kit.qty,
+          finish,
+          autoTag: "maglock-kit"
+        });
+      }
+    });
+  } else {
+    updatedItems = updatedItems.filter((item) => item.autoTag !== "maglock-kit");
+  }
+  return updatedItems;
+};
+
+const ELECTRIFIED_AUX_TYPES = [...MAGLOCK_SUPPORT_TYPES];
+const enforceSingleHinge = (items = []) => {
+  let hingeKept = false;
+  return items.filter((item) => {
+    if (item.category !== "Hinges") return true;
+    if (!hingeKept) {
+      hingeKept = true;
+      return true;
+    }
+    return false;
+  });
+};
+
+const ensureAcousticItems = (items = [], context = {}) => {
+  const { needsAcoustic = false, isDouble = false, hasVision = false, hasLouver = false } = context;
+  let updated = [...items];
+  if (!needsAcoustic) return updated.filter((item) => item.autoTag !== "acoustic-package");
+  const finish = getDefaultFinishForStandard(context.standard || "ANSI");
+
+  const addIfMissing = (signature, payload) => {
+    const exists = updated.some((item) => item.autoTag === "acoustic-package" && item.spec === signature);
+    if (!exists) updated.push(payload);
+  };
+
+  addIfMissing("AP-40", {
+    category: "Seals",
+    ref: getNextRefForCategory(updated, "Seals"),
+    type: "Acoustic Perimeter Seal",
+    style: "STC-40 Compression",
+    spec: "AP-40 perimeter seal set",
+    qty: isDouble ? "2 Sets" : "1 Set",
+    finish,
+    autoTag: "acoustic-package",
+    acousticContribution: "STC-rated"
+  });
+
+  addIfMissing("ADB-45", {
+    category: "Seals",
+    ref: getNextRefForCategory(updated, "Seals"),
+    type: "Automatic Door Bottom",
+    style: "Acoustic Drop",
+    spec: "ADB-45 mortised automatic bottom",
+    qty: isDouble ? "2" : "1",
+    finish,
+    autoTag: "acoustic-package",
+    acousticContribution: "STC-rated"
+  });
+
+  if (hasVision || hasLouver) {
+    addIfMissing("GKT-40", {
+      category: "Seals",
+      ref: getNextRefForCategory(updated, "Seals"),
+      type: "Vision/Louver Gasket",
+      style: "High Density",
+      spec: "GKT-40 acoustic glazing/louver kit",
+      qty: "1 Set",
+      finish,
+      autoTag: "acoustic-package",
+      acousticContribution: "STC-rated"
+    });
+  }
+
+  return updated;
+};
+
+const computeSetContext = (doors = [], items = []) => {
+  const needsAcoustic = doors.some((d) => parseInt(d.stc, 10) >= ACOUSTIC_THRESHOLD);
+  const isDouble = doors.some((d) => d.config === 'Double');
+  const hasVision = doors.some((d) => d.visionPanel);
+  const hasLouver = items.some((item) => (item.type || "").toLowerCase().includes("louver"));
+  return { needsAcoustic, isDouble, hasVision, hasLouver };
+};
+
+const sanitizeHardwareItems = (items = [], standard = "ANSI", context = {}) => {
+  const afterMaglock = ensureMaglockSupportItems(items, standard);
+  const afterHinge = enforceSingleHinge(afterMaglock);
+  return ensureAcousticItems(afterHinge, { ...context, standard });
+};
+
+const deriveSetIntentFromItems = (items = []) => {
+  const hasElectrified = items.some(
+    (item) =>
+      (item.category === "Electrified" && !MAGLOCK_SUPPORT_TYPES.includes(item.type)) ||
+      (item.category === "Locks" && (item.type || "").toLowerCase().includes("magnetic"))
+  );
+  return hasElectrified ? "Electromechanical" : "Mechanical";
+};
+
+const normalizeProject = (project) => {
+  if (!project) return project;
+  const normalizedDoors = (project.doors || []).map(normalizeDoor);
+  const normalizedSets = (project.sets || []).map((set) => {
+    const doorsForSet = normalizedDoors.filter((d) => (set.doors || []).includes(d.id));
+    const baseItems = set.items || [];
+    const context = computeSetContext(doorsForSet, baseItems);
+    const normalizedItems = sanitizeHardwareItems(baseItems, project.standard, context);
+    return {
+      ...set,
+      intent: set.intent || deriveSetIntentFromItems(normalizedItems),
+      items: normalizedItems
+    };
+  });
+  return { ...project, doors: normalizedDoors, sets: normalizedSets };
 };
 
 // --- CUSTOM UI COMPONENTS ---
@@ -243,7 +629,7 @@ const InsideText = () => <text x="50" y="20" textAnchor="middle" fontSize="10" f
 const AnsiIcon = ({ mode }) => {
   const doorFill = "white";
   const doorStroke = "black";
-  
+
   let door = null;
   let dot = null;
 
@@ -349,6 +735,8 @@ const HandingSelector = ({ value, onChange, standard }) => {
 
 const DoorPreview = ({ door, hardwareSet }) => {
   const isDouble = door.config === 'Double';
+  const isFireRatedDoor = parseInt(door.fire, 10) > 0;
+  const requiresRebatedMeeting = isDouble && isFireRatedDoor;
   const isGlass = door.material === 'Glass';
   const isAluminum = door.material === 'Aluminum';
   const isMetal = door.material === 'Metal';
@@ -386,7 +774,7 @@ const DoorPreview = ({ door, hardwareSet }) => {
   const frameHeight = 240;
   const frameThickness = 12;
   const clearance = 3;
-  const meetingGap = isDouble ? 6 : 0;
+  const meetingGap = isDouble ? (requiresRebatedMeeting ? 0 : 6) : 0;
   
   const viewWidth = frameWidth + viewPadding * 2;
   const viewHeight = frameHeight + 60;
@@ -417,14 +805,28 @@ const DoorPreview = ({ door, hardwareSet }) => {
   const itemsByCategory = (category) => hardwareItems.filter(item => item.category === category);
   const handles = itemsByCategory('Handles');
   const locks = itemsByCategory('Locks');
+  const electrifiedLocks = itemsByCategory('Electrified');
   const accessories = itemsByCategory('Accessories');
   const closers = itemsByCategory('Closers');
   const stops = itemsByCategory('Stops');
   const seals = itemsByCategory('Seals');
   const hingeItems = itemsByCategory('Hinges');
   const hingeDescriptor = hingeItems.map(i => `${i.name || ''} ${i.type || ''} ${i.style || ''}`).join(' ').toLowerCase();
+  const hingesPerLeaf = (() => {
+    const descriptor = hingeDescriptor;
+    if (descriptor.includes('continuous')) return 0;
+    const baseDefault =
+      descriptor.includes('patch') || descriptor.includes('pivot') || isGlass ? 2 : 3;
+    const totalQty = parseInt(hingeItems[0]?.qty, 10);
+    if (!totalQty || totalQty <= 0) return baseDefault;
+    const perLeaf = totalQty / (isDouble ? 2 : 1);
+    return Math.max(baseDefault, Math.round(perLeaf));
+  })();
 
   const hasPanic = includesKeyword([...handles, ...locks], 'panic');
+  const hasMagLock = includesKeyword([...locks, ...electrifiedLocks], 'magnetic lock');
+  const hasTrueElectrified = hasMagLock || electrifiedLocks.some((item) => !ELECTRIFIED_AUX_TYPES.includes(item.type));
+  const hasPushButton = includesKeyword(electrifiedLocks, 'push button');
   const hasPullHandle = includesKeyword(handles, 'pull');
   const hasLeverHandle = includesKeyword(handles, 'lever');
   const hasPushPlate = includesKeyword(handles, 'push');
@@ -453,7 +855,18 @@ const DoorPreview = ({ door, hardwareSet }) => {
     const hingeEdgeX = hingeOnLeft ? x : x + width;
     const strikeEdgeX = hingeOnLeft ? x + width : x;
     const hingeOutsideX = hingeOnLeft ? hingeEdgeX - 10 : hingeEdgeX + 10;
-    const hingePositions = [doorY + 28, doorY + doorHeight / 2 - 5, doorY + doorHeight - 38];
+    const strikeOnRight = hingeOnLeft;
+    const computeHingePositions = (count) => {
+      if (!count || count < 2) return [doorY + doorHeight / 2];
+      const topOffset = 30;
+      const bottomOffset = 30;
+      const usableHeight = doorHeight - topOffset - bottomOffset;
+      if (usableHeight <= 0) return [doorY + doorHeight / 2];
+      return Array.from({ length: count }, (_, idx) =>
+        doorY + topOffset + (usableHeight * idx) / (count - 1)
+      );
+    };
+    const hingePositions = computeHingePositions(hingesPerLeaf || 3);
     const hingeBlockWidth = clearance + 6;
     const hingeBlockX = hingeOnLeft ? x - clearance : x + width - 2;
     const liteWidth = Math.min(width * 0.4, 60);
@@ -470,13 +883,13 @@ const DoorPreview = ({ door, hardwareSet }) => {
     const closerBodyY = doorY + 4;
     const pivotX = hingeOnLeft ? closerBodyX + 4 : closerBodyX + closerBodyWidth - 4;
     const pivotY = closerBodyY + closerBodyHeight / 2;
-    const trackThickness = 4;
-    const jambInnerEdge = hingeOnLeft ? innerX : innerX + innerWidth;
-    const verticalTrackX = hingeOnLeft ? jambInnerEdge - trackThickness : jambInnerEdge;
     const headAttachY = frameY + frameThickness / 2;
-    const headAttachX = hingeOnLeft ? verticalTrackX + trackThickness : verticalTrackX;
-    const horizontalTrackX = Math.min(pivotX, headAttachX);
-    const horizontalTrackWidth = Math.max(6, Math.abs(pivotX - headAttachX));
+    const pushButtonWidth = 12;
+    const pushButtonHeight = 22;
+    const pushButtonX = strikeOnRight
+      ? Math.min(frameX + frameWidth + 4, viewWidth - pushButtonWidth - 2)
+      : Math.max(2, frameX - pushButtonWidth - 4);
+    const pushButtonY = doorY + doorHeight * 0.45 - pushButtonHeight / 2;
     let hingeVisual = 'butt';
     if (hingeDescriptor.includes('continuous')) hingeVisual = 'continuous';
     else if (hingeDescriptor.includes('concealed')) hingeVisual = 'concealed';
@@ -513,7 +926,10 @@ const DoorPreview = ({ door, hardwareSet }) => {
         );
       }
 
-      const positions = hingeVisual === 'patch' ? [hingePositions[0], hingePositions[hingePositions.length - 1]] : hingePositions;
+      const positions =
+        hingeVisual === 'patch'
+          ? [hingePositions[0], hingePositions[hingePositions.length - 1]]
+          : hingePositions;
       return positions.map((pos, idx) => {
         if (hingeVisual === 'concealed') {
           const concealedX = hingeOnLeft ? x : x + width - 6;
@@ -619,6 +1035,16 @@ const DoorPreview = ({ door, hardwareSet }) => {
         )}
         <rect x={hingeOnLeft ? x : x + width - hingeStripWidth} y={doorY} width={hingeStripWidth} height={doorHeight} fill="rgba(0,0,0,0.08)" />
         <rect x={hingeOnLeft ? x + width - lockStripWidth : x} y={doorY} width={lockStripWidth} height={doorHeight} fill={panelHighlight} opacity="0.35" />
+        {requiresRebatedMeeting && isDouble && (
+          <rect
+            x={hingeOnLeft ? x + width - 4 : x}
+            y={doorY + 2}
+            width="4"
+            height={doorHeight - 4}
+            fill="rgba(0,0,0,0.12)"
+            opacity="0.7"
+          />
+        )}
         {hasVision && !isGlass && !isAluminum && (
           <rect x={liteX} y={liteY} width={liteWidth} height={liteHeight} fill="#e0f2fe" stroke="#64748b" strokeWidth="1" rx="2" />
         )}
@@ -644,28 +1070,49 @@ const DoorPreview = ({ door, hardwareSet }) => {
         )}
         {renderHinges()}
         {hasSurfaceCloser && !isInactive && (
+          <rect
+            x={closerBodyX}
+            y={closerBodyY}
+            width={closerBodyWidth}
+            height={closerBodyHeight}
+            rx="2"
+            fill={closerColor}
+            stroke={hingeOutline}
+            strokeWidth="1"
+          />
+        )}
+        {hasMagLock && !isInactive && (
+          <rect
+            x={hingeOnLeft ? x + width - 28 : x + 4}
+            y={doorY + 6}
+            width="24"
+            height="8"
+            rx="2"
+            fill="#94a3b8"
+            stroke="#475569"
+            strokeWidth="0.8"
+          />
+        )}
+        {hasPushButton && !isInactive && (
           <g>
             <rect
-              x={closerBodyX}
-              y={closerBodyY}
-              width={closerBodyWidth}
-              height={closerBodyHeight}
-              rx="2"
-              fill={closerColor}
-              stroke={hingeOutline}
-              strokeWidth="1"
+              x={pushButtonX}
+              y={pushButtonY}
+              width={pushButtonWidth}
+              height={pushButtonHeight}
+              rx="3"
+              fill="#e5e7eb"
+              stroke="#4b5563"
+              strokeWidth="0.8"
             />
-            <rect
-              x={headAttachX - 2}
-              y={headAttachY - 5}
-              width="4"
-              height="10"
-              rx="1"
-              fill={closerColor}
-              stroke={hingeOutline}
-              strokeWidth="0.5"
+            <circle
+              cx={pushButtonX + pushButtonWidth / 2}
+              cy={pushButtonY + pushButtonHeight / 2}
+              r="4"
+              fill="#cbd5e1"
+              stroke="#334155"
+              strokeWidth="0.8"
             />
-            <circle cx={pivotX} cy={pivotY} r="2" fill={hingeOutline} />
           </g>
         )}
         {hasFloorSpring && !isInactive && (
@@ -685,7 +1132,16 @@ const DoorPreview = ({ door, hardwareSet }) => {
         ) : hasPullHandle ? (
           <rect x={handleCenterX - 2} y={handleCenterY - 20} width="4" height="40" rx="2" fill={hardwareColor} />
         ) : hasPushPlate ? (
-          <rect x={handleCenterX - 20} y={handleCenterY - 30} width="40" height="60" rx="4" fill="#e5e7eb" stroke={hardwareColor} strokeWidth="1" />
+          <rect
+            x={handleCenterX - 10}
+            y={handleCenterY - 23}
+            width="20"
+            height="46"
+            rx="3"
+            fill="#e5e7eb"
+            stroke={hardwareColor}
+            strokeWidth="1"
+          />
         ) : (
           <g>
             <circle cx={handleCenterX} cy={handleCenterY} r="6" fill="#e2e8f0" stroke={hardwareColor} strokeWidth="1" />
@@ -743,14 +1199,14 @@ const DoorPreview = ({ door, hardwareSet }) => {
           <rect x={innerX + clearance + doubleLeafWidth} y={doorY} width={meetingGap} height={doorHeight} fill={wallFill} />
         )}
 
-        {isDouble ? (
-          <>
-            <DoorLeaf x={innerX + clearance} width={doubleLeafWidth} leafHanding="LH" isInactive />
-            <DoorLeaf x={innerX + clearance + doubleLeafWidth + meetingGap} width={doubleLeafWidth} leafHanding="RH" />
-          </>
-        ) : (
-          <DoorLeaf x={innerX + clearance} width={singleLeafWidth} leafHanding={handing.includes('L') ? 'LH' : 'RH'} />
-        )}
+    {isDouble ? (
+      <>
+        <DoorLeaf x={innerX + clearance} width={doubleLeafWidth} leafHanding="LH" isInactive />
+        <DoorLeaf x={innerX + clearance + doubleLeafWidth + meetingGap} width={doubleLeafWidth} leafHanding="RH" />
+      </>
+    ) : (
+      <DoorLeaf x={innerX + clearance} width={singleLeafWidth} leafHanding={handing.includes('L') ? 'LH' : 'RH'} />
+    )}
 
         {hasThreshold && (
           <rect x={innerX + clearance / 2} y={floorLineY - 5} width={innerWidth - clearance} height="3" rx="1.5" fill="#b0bec5" />
@@ -761,6 +1217,11 @@ const DoorPreview = ({ door, hardwareSet }) => {
       <div className="mt-2 text-xs text-gray-500 font-medium text-center">
         {door.config} {door.material} <br/>
         <span className="text-indigo-600 font-bold">{handing}</span> {hasVision ? '+ Lite Kit' : ''}
+        {isDouble && (
+          <div className="text-[11px] text-gray-500 mt-1">
+            {requiresRebatedMeeting ? 'Rebated meeting stile (fire-rated pair)' : 'Flush meeting stile'}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -768,54 +1229,163 @@ const DoorPreview = ({ door, hardwareSet }) => {
 
 // --- MAIN APP COMPONENT ---
 
-const LandingPage = ({ onStart, hasProjects }) => (
-  <div className="absolute top-0 left-0 w-full min-h-screen bg-gradient-to-br from-slate-50 to-indigo-50 z-50 flex flex-col overflow-y-auto">
-    <nav className="px-4 md:px-8 py-6 flex justify-between items-center">
-      <div className="flex items-center gap-2 font-extrabold text-xl md:text-2xl text-gray-900">
-        <ShieldCheck className="text-indigo-600 w-6 h-6 md:w-8 md:h-8" />
-        <span>SpecSmart</span>
+const LandingPage = ({ onStart, hasProjects }) => {
+
+  return (
+  <div className="relative w-full min-h-screen bg-slate-950 text-white overflow-hidden flex flex-col">
+    <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+      <div className="absolute -top-32 -left-20 w-80 h-80 bg-indigo-600/30 blur-3xl" />
+      <div className="absolute bottom-0 right-0 w-[450px] h-[450px] bg-sky-500/20 blur-[180px]" />
+    </div>
+    <nav className="relative z-20 px-6 md:px-10 lg:px-12 py-5 flex items-center justify-between">
+      <div className="flex items-center gap-3">
+        <div className="bg-white/10 rounded-full p-2 backdrop-blur">
+          <ShieldCheck className="text-sky-300 w-6 h-6" />
+        </div>
+        <div>
+          <div className="text-lg md:text-2xl font-black tracking-tight">SpecSmart</div>
+          <div className="text-[11px] uppercase tracking-[0.35em] text-white/50">Door Hardware Intelligence</div>
+        </div>
       </div>
-      <div>
-        <button 
-          onClick={onStart} 
-          className={`px-4 py-2 md:px-6 md:py-2 rounded-md font-medium text-sm md:text-base transition-colors ${hasProjects ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-white border border-gray-200 hover:bg-gray-50'}`}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={() => alert('Product tour coming soon.')}
+          className="hidden sm:inline-flex px-4 py-2 rounded-full border border-white/10 text-sm font-semibold text-white/80 hover:bg-white/5 transition"
         >
-          {hasProjects ? 'Dashboard' : 'Get Started'}
+          Product Tour
+        </button>
+        <button
+          onClick={onStart}
+          className="px-4 md:px-6 py-2 rounded-full bg-indigo-500 hover:bg-indigo-400 text-sm md:text-base font-semibold shadow-lg shadow-indigo-500/40 transition"
+        >
+          {hasProjects ? 'Open Dashboard' : 'Start Configuring'}
         </button>
       </div>
     </nav>
 
-    <section className="flex-1 flex flex-col lg:flex-row items-center justify-between px-4 md:px-8 lg:px-16 max-w-7xl mx-auto gap-8 lg:gap-16 py-8 lg:py-12">
-      <div className="max-w-xl animate-slideUp text-center lg:text-left">
-        <div className="inline-flex items-center px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs md:text-sm font-semibold mb-6">
-          <ShieldCheck className="w-4 h-4 mr-2" /> Best-in-Class Specification Tool
-        </div>
-        <h1 className="text-4xl md:text-5xl lg:text-6xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-slate-900 to-indigo-700 mb-6 leading-tight">
-          The Smarter Way to Specify Door Hardware.
-        </h1>
-        <p className="text-lg md:text-xl text-gray-600 mb-10 leading-relaxed">
-          Automated standards compliance (ANSI/EN), smart product recommendations, and instant Excel exports. 
-          Built for Architects and Specifiers.
-        </p>
-        <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start">
-          <button onClick={onStart} className="px-8 py-4 bg-indigo-600 text-white rounded-lg font-bold text-lg shadow-lg hover:bg-indigo-700 transition-all flex items-center justify-center gap-2">
-            Start Specification Journey <ArrowRight className="w-5 h-5" />
-          </button>
-          <button onClick={() => alert('Demo Mode: Click Start Journey to begin!')} className="px-8 py-4 bg-white text-gray-900 border border-gray-200 rounded-lg font-bold text-lg hover:bg-gray-50 transition-all">
-            Watch Demo
-          </button>
+    <main className="relative z-10 flex-1 w-full flex flex-col">
+      <div className="w-full max-w-6xl mx-auto px-6 md:px-12 py-10 md:py-16 space-y-12">
+        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_520px] gap-12 items-start">
+          <div className="space-y-8">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 text-xs uppercase tracking-widest text-white/70">
+              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" /> For Architects • Consultants • Specifiers
+            </div>
+          <div>
+            <h1 className="text-4xl md:text-5xl lg:text-6xl font-black leading-tight text-white">
+              Specify door hardware with confidence in <span className="text-sky-300">minutes</span>, not days.
+            </h1>
+            <p className="mt-4 text-lg md:text-xl text-white/70">
+              SpecSmart unifies code compliance, hardware libraries, and visual coordination into a single premium workspace.
+              Build ANSI/EN ready schedules, visualize door sets, and export polished specs instantly.
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-4">
+            <button
+              onClick={onStart}
+              className="px-8 py-4 bg-sky-400 text-slate-950 font-bold rounded-xl shadow-xl shadow-sky-500/30 flex items-center justify-center gap-2 text-lg hover:bg-sky-300 transition"
+            >
+              Start Configuring <ArrowRight className="w-5 h-5" />
+            </button>
+            <button
+              onClick={() => alert('Demo replay coming soon.')}
+              className="px-8 py-4 border border-white/20 rounded-xl font-semibold text-lg text-white/80 hover:bg-white/10 transition flex items-center justify-center gap-2"
+            >
+              View Demo
+            </button>
+          </div>
+          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-white/80">
+            {[
+              { title: "Code-Compliant Hardware Logic", desc: "Supports ANSI / EN rules and life-safety requirements." },
+              { title: "Door Hardware Layout Preview", desc: "See hardware placement clearly before specs are finalized." },
+              { title: "Smart Door Scheduling", desc: "Includes STC, ADA, and access-control fields automatically." },
+              { title: "One-Click Tender + BIM Exports", desc: "Generate PDF, Excel, and BIM-ready files instantly." },
+              { title: "Application-Based Door Presets", desc: "Prefill door types based on building use like Healthcare or Education." },
+              { title: "Project Dashboard Management", desc: "Manage multiple projects with complete control." }
+            ].map((usp) => (
+              <li key={usp.title} className="flex items-start gap-2 bg-white/5 rounded-lg p-3 border border-white/5">
+                <Check className="text-emerald-400 w-4 h-4 mt-0.5" />
+                <div>
+                  <div className="font-semibold text-white">{usp.title}</div>
+                  <div className="text-white/70">{usp.desc}</div>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+            {HERO_STATS.map((stat) => (
+              <div key={stat.label} className="bg-white/5 rounded-2xl p-4 border border-white/5">
+                <div className="text-xl font-black">{stat.value}</div>
+                <div className="text-xs uppercase tracking-wide text-white/60">{stat.label}</div>
+              </div>
+            ))}
+          </div>
+          </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,360px)_minmax(0,1fr)] bg-white/5 border border-white/10 rounded-[30px] p-6 gap-8 shadow-2xl shadow-black/50">
+            <div className="space-y-4">
+              <div className="text-xs uppercase tracking-[0.4em] text-white/40">Instant Insights</div>
+              <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-400/20 to-emerald-600/10 border border-white/10 shadow-lg">
+                <div className="text-xs uppercase tracking-[0.3em] text-emerald-200">Live scoring</div>
+                <div className="text-white font-semibold text-xl mt-2">Compliance Pulse</div>
+                <p className="text-white/70 mt-1 text-sm">
+                  Every submitted door schedule is evaluated against life-safety, ADA, and fire-door logic in milliseconds.
+                </p>
+              </div>
+              <div className="p-4 rounded-2xl bg-gradient-to-br from-sky-400/15 to-sky-600/10 border border-white/10 shadow-lg">
+                <div className="text-xs uppercase tracking-[0.3em] text-sky-200">Adaptive visuals</div>
+                <div className="text-white font-semibold text-xl mt-2">Material Intelligence</div>
+                <p className="text-white/70 mt-1 text-sm">
+                  Switch Timber → Glass → Aluminum and see hinge, lock, and seal graphics update instantly before specifying.
+                </p>
+              </div>
+            </div>
+            <div className="space-y-4">
+              <div className="text-xs uppercase tracking-[0.4em] text-white/40">Workflow Snapshot</div>
+              <div className="flex flex-col lg:flex-row lg:items-stretch gap-4">
+                {[
+                  { title: "1. Project Setup", desc: "Define facility, fire-rating, and jurisdiction rules—the rule engine tunes itself instantly." },
+                  { title: "2. Door Schedule", desc: "Capture dimensions, STC, ADA, and access logic. Additional locations auto-adjust quantity." },
+                  { title: "3. Hardware Sets", desc: "Door Hardware Layout Preview shows hinges, closers, maglocks, and panic trim before specification." },
+                  { title: "4. Validation & Review", desc: "Compliance Pulse verifies life-safety, then exports BIM, PDF, and Excel packages in one click." }
+                ].map((card, idx, arr) => (
+                  <React.Fragment key={card.title}>
+                    <div className="bg-slate-950/60 border border-white/10 rounded-2xl p-4 text-white/80 flex-1 shadow relative">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-7 h-7 rounded-full bg-sky-400 text-slate-950 font-bold flex items-center justify-center shadow-lg shadow-sky-500/40">
+                          {idx + 1}
+                        </div>
+                        <div className="text-white font-semibold">{card.title}</div>
+                      </div>
+                      <p className="text-sm text-white/65">{card.desc}</p>
+                    </div>
+                    {idx < arr.length - 1 && (
+                      <div className="hidden lg:flex items-center text-sky-300">
+                        <ArrowRight className="w-8 h-8" />
+                      </div>
+                    )}
+                  </React.Fragment>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
-      
-      <div className="flex-1 relative perspective-1500 w-full max-w-lg hidden md:block">
-        {/* Visual Placeholder for Landing Page */}
-        <div className="bg-white rounded-xl shadow-2xl p-6 border border-white/80 transform-3d-card animate-float">
-            <div className="h-40 bg-gray-100 rounded-lg flex items-center justify-center text-gray-400">3D Product Preview</div>
-        </div>
-      </div>
-    </section>
+    </main>
+    <footer className="relative z-10 w-full border-t border-white/5 bg-slate-950/80 px-6 md:px-10 lg:px-12 py-6 text-center text-sm text-white/60">
+      Engineered with care by{" "}
+      <a
+        href="https://techarix.com"
+        target="_blank"
+        rel="noreferrer"
+        className="text-white font-semibold underline underline-offset-2 decoration-white/40 hover:text-sky-300"
+      >
+        Techarix
+      </a>{" "}
+      — Guided by DHW experts
+    </footer>
   </div>
 );
+};
 
 const App = () => {
   // State
@@ -828,6 +1398,7 @@ const App = () => {
   const [library, setLibrary] = useState([]);
   const [printMode, setPrintMode] = useState(false);
   const [exportStatus, setExportStatus] = useState('');
+  const [lockResetSignals, setLockResetSignals] = useState({});
   
   // Door Modal State (Hierarchical Location)
   const [doorForm, setDoorForm] = useState({
@@ -837,15 +1408,25 @@ const App = () => {
     width: 900, height: 2100, weight: 45, 
     fire: 0, use: '', material: 'Timber', config: 'Single',
     thickness: 45, visionPanel: false, handing: 'RH',
-    stc: 35, ada: true, notes: '' 
+    stc: 35, ada: false, notes: '',
+    hardwareIntent: 'Mechanical',
+    additionalLocations: []
   });
   
   const [doorErrors, setDoorErrors] = useState({});
   const [doorHint, setDoorHint] = useState('');
   const [complianceNote, setComplianceNote] = useState(null);
   const [addItemModal, setAddItemModal] = useState({ isOpen: false, setId: null });
+  const [bulkModal, setBulkModal] = useState({ isOpen: false, templateId: "", markPrefix: "", locationsText: "" });
   const [showAuditLog, setShowAuditLog] = useState(false);
   const [saveStatus, setSaveStatus] = useState('Saved');
+  const recommendedIntent = getRecommendedHardwareIntent(doorForm);
+  const numericWidth = parseInt(doorForm.width, 10) || 0;
+  const adaClearOpening = Math.max(0, numericWidth - ADA_CLEARANCE_DEDUCTION_MM);
+  const showAdaWarning = doorForm.ada && (numericWidth < ADA_MIN_CLEAR_OPENING_MM || adaClearOpening < ADA_MIN_CLEAR_OPENING_MM);
+  const adaWarningMessage = showAdaWarning
+    ? `Door width ${numericWidth || 0}mm provides ${adaClearOpening}mm clear opening; ADA requires ${ADA_MIN_CLEAR_OPENING_MM}mm (32").`
+    : '';
 
   // Load Data on Mount
   useEffect(() => {
@@ -853,7 +1434,7 @@ const App = () => {
       const saved = localStorage.getItem('specSmartDB');
       if (saved) {
         const data = JSON.parse(saved);
-        if (data.projects) setProjects(data.projects);
+        if (data.projects) setProjects(data.projects.map(normalizeProject));
         if (data.library) setLibrary(data.library);
       }
     } catch (e) {
@@ -903,7 +1484,7 @@ const App = () => {
     const id = generateId();
     const newProj = { 
       id, 
-      name: "New Project", 
+      name: "", 
       type: "Commercial Office", 
       standard: "ANSI",
       details: { client: "", architect: "", jurisdiction: "IBC 2021", address: "" },
@@ -952,7 +1533,8 @@ const App = () => {
       if (p.id === currentId) {
         const newDoors = [...p.doors];
         const doorId = doorForm.id || generateId();
-        const doorData = { ...doorForm, id: doorId };
+        const cleanedLocations = (doorForm.additionalLocations || []).filter((loc) => (loc.zone || loc.level || loc.roomName));
+        const doorData = normalizeDoor({ ...doorForm, id: doorId, additionalLocations: cleanedLocations });
         
         const idx = newDoors.findIndex(d => d.id === doorForm.id);
         if (idx >= 0) newDoors[idx] = doorData;
@@ -986,11 +1568,11 @@ const App = () => {
     
     const newDoors = [];
     for(let i=0; i < numCopies; i++) {
-        newDoors.push({ 
+        newDoors.push(normalizeDoor({ 
             ...original, 
             id: generateId(), 
             mark: `${original.mark}-CP${i+1}` 
-        });
+        }));
     }
     
     const updatedProjects = projects.map(p => 
@@ -998,6 +1580,29 @@ const App = () => {
     );
     setProjects(updatedProjects);
     addToAuditLog(currentId, `Bulk duplicated door ${original.mark} (${numCopies} times)`);
+  };
+
+  const addAdditionalLocation = () => {
+    setDoorForm(prev => ({
+      ...prev,
+      additionalLocations: [...(prev.additionalLocations || []), { zone: prev.zone, level: prev.level, roomName: prev.roomName }]
+    }));
+  };
+
+  const updateAdditionalLocation = (idx, field, value) => {
+    setDoorForm(prev => {
+      const updated = [...(prev.additionalLocations || [])];
+      updated[idx] = { ...updated[idx], [field]: value };
+      return { ...prev, additionalLocations: updated };
+    });
+  };
+
+  const removeAdditionalLocation = (idx) => {
+    setDoorForm(prev => {
+      const updated = [...(prev.additionalLocations || [])];
+      updated.splice(idx, 1);
+      return { ...prev, additionalLocations: updated };
+    });
   };
 
   const updateDynamicProps = () => {
@@ -1029,6 +1634,7 @@ const App = () => {
       } else {
           newWeight = Math.round(area * 30);
       }
+      newWeight = Math.ceil(newWeight / 5) * 5;
 
       let recStc = 30;
       for (const [key, value] of Object.entries(ACOUSTIC_RECOMMENDATIONS)) {
@@ -1040,8 +1646,10 @@ const App = () => {
 
       setDoorForm(prev => ({
           ...prev,
-          thickness: newThickness,
-          weight: newWeight,
+          thickness: prev.thicknessAuto === false ? prev.thickness : newThickness,
+          thicknessAuto: prev.thicknessAuto === undefined ? true : prev.thicknessAuto,
+          weight: prev.weightAuto === false ? prev.weight : newWeight,
+          weightAuto: prev.weightAuto === undefined ? true : prev.weightAuto,
           stc: recStc
       }));
   };
@@ -1100,9 +1708,9 @@ const App = () => {
     const facilityUsages = FACILITY_DATA[proj.type]?.usages || FACILITY_DATA["Commercial Office"].usages;
     
     if (door) {
-      setDoorForm({ ...door });
+      setDoorForm(normalizeDoor({ ...door }));
     } else {
-      setDoorForm({
+      setDoorForm(normalizeDoor({
         id: '', 
         mark: `D-${(proj.doors.length + 1).toString().padStart(3, '0')}`,
         zone: 'Tower A', level: '01', roomName: '', // Corrected Default
@@ -1115,10 +1723,13 @@ const App = () => {
         material: 'Timber', 
         config: 'Single',
         thickness: 45,
+        thicknessAuto: true,
         visionPanel: false,
         handing: 'RH',
-        stc: 35, ada: true, notes: ''
-      });
+        stc: 35, ada: false, notes: '',
+        weightAuto: true,
+        additionalLocations: []
+      }));
     }
     setDoorErrors({});
     setDoorHint('');
@@ -1173,10 +1784,13 @@ const App = () => {
 
       const hwData = [];
       p.sets.forEach(s => {
+        const doorsInSet = p.doors.filter(d => s.doors.includes(d.id));
+        const configLabel = doorsInSet.some(d => d.config === 'Double') ? 'Double' : 'Single';
         (s.items || []).forEach(i => {
           hwData.push({
-            "Set": s.id, "Set Name": s.name, "Ref": i.ref, "Category": i.category,
-            "Type": i.type, "Style": i.style, "Finish": i.finish, "Spec": i.spec, "Qty": i.qty
+            "Set": s.id, "Set Name": s.name, "Door Config": configLabel, "Ref": i.ref, "Category": i.category,
+            "Type": i.type, "Style": i.style, "Finish": i.finish, "Spec": i.spec, "Qty": i.qty,
+            "Acoustic Contribution": i.acousticContribution || ""
           });
         });
       });
@@ -1235,22 +1849,25 @@ const App = () => {
   // Hardware Logic
   const generateHardwareSets = () => {
     const proj = getProj();
-    const defaultFinish = proj.standard === "ANSI" ? "630 (US32D)" : "SSS";
+    const defaultFinish = getDefaultFinishForStandard(proj.standard);
     const groups = {};
 
     proj.doors.forEach(d => {
-      const key = `${d.use}|${d.fire}|${d.config}|${d.material}|${d.stc}`; 
+      const key = `${d.use}|${d.fire}|${d.config}|${d.material}|${d.stc}|${d.hardwareIntent || 'Mechanical'}`; 
       if (!groups[key]) groups[key] = [];
       groups[key].push(d);
     });
 
     const newSets = Object.entries(groups).map(([key, doors], idx) => {
-      const [use, fireStr, config, material, stcStr] = key.split('|');
+      const [use, fireStr, config, material, stcStr, intentKey] = key.split('|');
       const fire = parseInt(fireStr);
       const stc = parseInt(stcStr);
       const rep = doors.reduce((a, b) => a.weight > b.weight ? a : b);
+      const packageIntent = intentKey === 'Electromechanical' ? 'Electromechanical' : 'Mechanical';
+      const adaDoors = doors.some((door) => door.ada);
       
       const setID = `HW-${String(idx + 1).padStart(2, '0')}`;
+      const isDouble = config === 'Double';
       let items = [];
       const addItem = (cat, ref, type, style, spec, qty) => items.push({ category: cat, ref, type, style, spec, qty, finish: defaultFinish });
 
@@ -1258,35 +1875,73 @@ const App = () => {
       if (rep.height > 2300) hingeQty = 4;
       if (rep.weight > 120) hingeQty = 4;
       if (rep.height > 2300 && rep.weight > 120) hingeQty = 5;
+      const totalHingeQty = hingeQty * (isDouble ? 2 : 1);
+
+      const activeLeafSpec = (text) => isDouble ? `${text} (Active Leaf)` : text;
+      const inactiveLeafSpec = (text) => isDouble ? `${text} (Inactive Leaf)` : text;
 
       if (material === "Glass") {
-          addItem("Hinges", "P01", "Patch Fitting", "Top Patch", "SS Patch", "1");
-          addItem("Hinges", "P02", "Patch Fitting", "Bottom Patch", "SS Patch", "1");
-          addItem("Locks", "L01", "Patch Lock", "Corner Patch Lock", "Euro Cylinder Type", "1");
-          addItem("Handles", "H01", "Pull Handle", "D-Pull", "600mm ctc", "1 Pr");
-          addItem("Closers", "D01", "Floor Spring", "Double Action", "EN 1-4", "1");
+          const patchQty = isDouble ? "2" : "1";
+          addItem("Hinges", "P01", "Patch Fitting", "Top Patch", "Top/Bottom patch kit", patchQty);
+          addItem("Locks", "L01", "Patch Lock", "Corner Patch Lock", activeLeafSpec("Euro Cylinder Type"), "1");
+          addItem("Handles", "H01", "Pull Handle", "D-Pull", activeLeafSpec("600mm ctc"), "1 Pr");
+          addItem("Closers", "D01", "Floor Spring", "Double Action", activeLeafSpec("EN 1-4"), "1");
+          if (isDouble) addItem("Closers", "D02", "Floor Spring", "Double Action", inactiveLeafSpec("EN 1-4"), "1");
       } else {
           const hingeType = proj.standard === "ANSI" ? "4.5x4.5" : "102x76x3";
-          addItem("Hinges", "H01", "Butt Hinge", "Ball Bearing", `${hingeType}, SS`, hingeQty.toString());
+          addItem("Hinges", "H01", "Butt Hinge", "Ball Bearing", `${hingeType}, SS`, totalHingeQty.toString());
           
           if (use.toLowerCase().includes("stair")) {
-              addItem("Locks", "L01", "Panic Bar", "Rim Type", "Fire Rated Exit Device", "1");
+              addItem("Locks", "L01", "Panic Bar", "Rim Type", activeLeafSpec("Fire Rated Exit Device"), "1");
           } else {
-              addItem("Locks", "L01", "Mortise Lock", "Sashlock", "Cylinder Function", "1");
-              addItem("Cylinders", "C01", "Cylinder", "Euro Profile", "Key/Turn", "1");
-              addItem("Handles", "H02", "Lever Handle", "Return to Door", "19mm dia", "1 Pr");
+              addItem("Locks", "L01", "Mortise Lock", "Sashlock", activeLeafSpec("Cylinder Function"), "1");
+              addItem("Cylinders", "C01", "Cylinder", "Euro Profile", activeLeafSpec("Key/Turn"), "1");
+              addItem("Handles", "H02", "Lever Handle", "Return to Door", activeLeafSpec("19mm dia"), "1 Pr");
           }
           
-          addItem("Closers", "D01", "Overhead Closer", "Rack & Pinion", "EN 2-5, Backcheck", "1");
+          addItem("Closers", "D01", "Overhead Closer", "Rack & Pinion", activeLeafSpec("EN 2-5, Backcheck"), "1");
+          if (isDouble) addItem("Closers", "D02", "Overhead Closer", "Rack & Pinion", inactiveLeafSpec("EN 2-5, Backcheck"), "1");
           addItem("Stops", "S01", "Door Stop", "Floor Mounted Dome", "Rubber Buffer", "1");
+          if (fire > 0) {
+            addItem("Seals", "GS01", "Perimeter Seal", "Intumescent", "Head & jambs, 3 sides", "1 Set");
+            addItem("Seals", "GS02", "Drop Seal", "Automatic", "Under door smoke seal", "1");
+          }
+          if (isDouble) addItem("Accessories", "A01", "Leaf Assignment", "Active/Inactive", "Inactive leaf held closed without locking hardware", "1");
       }
 
+      if (fire > 0 && material === "Glass") {
+          addItem("Seals", "GS01", "Perimeter Seal", "Intumescent", "Glass intumescent gasketing", "1 Set");
+          addItem("Seals", "GS02", "Drop Seal", "Automatic", "Smoke seal at threshold", "1");
+      }
+
+      if (packageIntent === 'Electromechanical') {
+          addItem("Electrified", "E01", "Electric Strike", fire > 0 ? "Fail-Safe" : "Fail-Secure", activeLeafSpec("Access control interface"), "1");
+      }
+
+      const operationPieces = [];
+      if (fire > 0) operationPieces.push(`Fire door to ${fire}min with ${doorsInlined(config)} configuration`);
+      else operationPieces.push(`${config} door, non-fire rated`);
+      if (packageIntent === 'Electromechanical') {
+        operationPieces.push("Electrified access control with fail-safe release");
+      } else {
+        operationPieces.push("Mechanical locking with free egress");
+      }
+      const hasProximity = items.some(i => (i.type || '').toLowerCase().includes('panic'));
+      if (hasProximity) operationPieces.push("Single-motion exit via panic hardware");
+      const hasSeals = items.some(i => i.category === 'Seals');
+      if (hasSeals) operationPieces.push("Perimeter and bottom seals included");
+      if (adaDoors) operationPieces.push("Meets ADA 813mm clear opening with accessible hardware");
+      const operationText = operationPieces.join(". ") + ".";
+
+      const context = computeSetContext(doors, items);
+      const sanitizedItems = sanitizeHardwareItems(items, proj.standard, context);
       return {
         id: setID,
         name: `${use} Door (${material}) - ${fire > 0 ? fire + 'min' : 'NFR'}`,
         doors: doors.map(d => d.id),
-        items,
-        operation: "Door is self-closing and latching."
+        intent: packageIntent,
+        items: sanitizedItems,
+        operation: operationText
       };
     });
 
@@ -1304,7 +1959,9 @@ const App = () => {
           if (s.id === setId) {
             const newItems = [...s.items];
             newItems[idx] = { ...newItems[idx], [field]: val };
-            return { ...s, items: newItems };
+            const doorsInSet = p.doors.filter(d => s.doors.includes(d.id));
+            const context = computeSetContext(doorsInSet, newItems);
+            return { ...s, items: sanitizeHardwareItems(newItems, p.standard, context) };
           }
           return s;
         });
@@ -1325,7 +1982,8 @@ const App = () => {
   const loadSetFromLibrary = (libSet) => {
       const proj = getProj();
       const newSetId = `HW-${String(proj.sets.length + 1).padStart(2, '0')}`;
-      const newSet = { ...libSet, id: newSetId, doors: [] };
+      const baseSet = { ...libSet, id: newSetId, doors: [] };
+      const newSet = { ...baseSet, items: sanitizeHardwareItems(baseSet.items || [], proj.standard, computeSetContext([], baseSet.items || [])) };
       
       const updatedProjects = projects.map(p => 
         p.id === currentId ? { ...p, sets: [...p.sets, newSet] } : p
@@ -1343,34 +2001,32 @@ const App = () => {
     const proj = getProj();
     if (!proj) return;
     
-    const defaultFinish = proj.standard === "ANSI" ? "630 (US32D)" : "SSS";
+    const defaultFinish = getDefaultFinishForStandard(proj.standard);
     
     // Find styles
     const catData = PRODUCT_CATALOG[category];
     const typeData = catData?.types.find(t => t.name === type);
     const defaultStyle = typeData ? typeData.styles[0] : "";
     
-    let refPrefix = "X";
-    if(category === "Hinges") refPrefix = "H";
-    if(category === "Locks") refPrefix = "L";
-    if(category === "Closers") refPrefix = "D";
-    if(category === "Handles") refPrefix = "H";
-    if(category === "Stops") refPrefix = "S";
-    if(category === "Seals") refPrefix = "GS";
-    
     const targetSet = proj.sets.find(s => s.id === addItemModal.setId);
     if (!targetSet) return;
+    if (category === "Hinges" && targetSet.items.some(i => i.category === "Hinges")) {
+      alert("Only one hanging product can be specified per hardware set.");
+      return;
+    }
 
-    const count = targetSet.items.filter(i => i.category === category).length;
-    const ref = `${refPrefix}${String(count + 2).padStart(2, '0')}`;
+    const ref = getNextRefForCategory(targetSet.items, category);
 
     const updatedProjects = projects.map(p => {
       if (p.id === currentId) {
         const newSets = p.sets.map(s => {
           if (s.id === addItemModal.setId) {
+            const newItem = { category, ref, type, style: defaultStyle, spec: "", qty: "1", finish: defaultFinish };
+            const doorsInSet = p.doors.filter(d => s.doors.includes(d.id));
+            const context = computeSetContext(doorsInSet, [...s.items, newItem]);
             return {
               ...s,
-              items: [...s.items, { category, ref, type, style: defaultStyle, spec: "", qty: "1", finish: defaultFinish }]
+              items: sanitizeHardwareItems([...s.items, newItem], p.standard, context)
             };
           }
           return s;
@@ -1383,6 +2039,45 @@ const App = () => {
     setAddItemModal({ isOpen: false, setId: null });
   };
 
+  const handleBulkCreate = () => {
+    const proj = getProj();
+    const template = proj?.doors.find(d => d.id === bulkModal.templateId);
+    if (!proj || !template) {
+      alert("Select a template door.");
+      return;
+    }
+    const lines = bulkModal.locationsText.split('\n').map(l => l.trim()).filter(Boolean);
+    if (!lines.length) {
+      alert("Provide at least one location.");
+      return;
+    }
+    const parsed = lines.map(line => {
+      const parts = line.split('|').map(p => p.trim());
+      return {
+        zone: parts[0] || template.zone || '',
+        level: parts[1] || template.level || '',
+        roomName: parts[2] || template.roomName || ''
+      };
+    });
+    const [first, ...rest] = parsed;
+    const markBase = bulkModal.markPrefix || template.mark || `D-${String(proj.doors.length + 1).padStart(3, '0')}`;
+    const newMark = generateUniqueMark(proj.doors, markBase);
+    const newDoor = normalizeDoor({
+      ...template,
+      id: generateId(),
+      mark: newMark,
+      zone: first.zone,
+      level: first.level,
+      roomName: first.roomName,
+      additionalLocations: rest,
+      qty: parsed.length
+    });
+    const updatedProjects = projects.map(p => p.id === currentId ? { ...p, doors: [...p.doors, newDoor] } : p);
+    setProjects(updatedProjects);
+    addToAuditLog(currentId, `Bulk created door ${newMark} (${parsed.length} locations)`);
+    setBulkModal({ isOpen: false, templateId: "", markPrefix: "", locationsText: "" });
+  };
+
   const deleteSetItem = (setId, idx) => {
     const updatedProjects = projects.map(p => {
       if (p.id === currentId) {
@@ -1390,7 +2085,9 @@ const App = () => {
           if (s.id === setId) {
             const newItems = [...s.items];
             newItems.splice(idx, 1);
-            return { ...s, items: newItems };
+            const doorsInSet = p.doors.filter(d => s.doors.includes(d.id));
+            const context = computeSetContext(doorsInSet, newItems);
+            return { ...s, items: sanitizeHardwareItems(newItems, p.standard, context) };
           }
           return s;
         });
@@ -1415,6 +2112,8 @@ const App = () => {
           if (isFireRated) {
               const hasCloser = s.items.some(i => i.category === 'Closers');
               if (!hasCloser) issues.push({ set: s.id, type: 'critical', msg: `Fire Rated set ${s.id} is missing a Door Closer.` });
+              const hasSeal = s.items.some(i => i.category === 'Seals');
+              if (!hasSeal) issues.push({ set: s.id, type: 'critical', msg: `Fire Rated set ${s.id} requires perimeter/drop seals.` });
           }
 
           // Check 2: Stair/Exit Missing Panic
@@ -1444,7 +2143,7 @@ const App = () => {
           <div className="bg-white min-h-screen text-black p-8 font-serif">
               <div className="flex justify-between items-center mb-8 border-b-2 border-black pb-4">
                   <div>
-                      <h1 className="text-3xl font-bold uppercase tracking-wider">{getProj().name}</h1>
+                      <h1 className="text-3xl font-bold uppercase tracking-wider">{getProj().name?.trim() || "New Project"}</h1>
                       <p className="text-sm">Architectural Door Hardware Schedule</p>
                   </div>
                   <div className="text-right text-sm">
@@ -1460,7 +2159,9 @@ const App = () => {
                       <div key={s.id} className="mb-10 break-inside-avoid">
                           <div className="flex justify-between items-end border-b border-black mb-2 pb-1">
                               <h2 className="text-xl font-bold">{s.id}: {s.name}</h2>
-                              <span className="text-sm font-mono">{repDoor ? `${repDoor.fire > 0 ? `FD${repDoor.fire}` : 'NFR'} | ${repDoor.material}` : ''}</span>
+                              <span className="text-sm font-mono">
+                                {repDoor ? `${repDoor.fire > 0 ? `FD${repDoor.fire}` : 'NFR'} | ${repDoor.material} | ${repDoor.config}` : ''}
+                              </span>
                           </div>
                           <div className="mb-4 text-sm italic text-gray-700">{s.operation}</div>
                           
@@ -1471,6 +2172,7 @@ const App = () => {
                                       <th className="text-left p-2">Item</th>
                                       <th className="text-left p-2">Description</th>
                                       <th className="text-left p-2">Finish</th>
+                                      <th className="text-left p-2">Acoustic Contribution</th>
                                       <th className="text-center p-2">Qty</th>
                                   </tr>
                               </thead>
@@ -1480,13 +2182,14 @@ const App = () => {
                                       if (itemsInGroup.length === 0) return null;
                                       return (
                                           <React.Fragment key={catGroup}>
-                                              <tr className="bg-gray-50"><td colSpan="5" className="p-1 pl-2 font-bold text-xs uppercase text-gray-500 border-b">{catGroup}</td></tr>
+                                              <tr className="bg-gray-50"><td colSpan="6" className="p-1 pl-2 font-bold text-xs uppercase text-gray-500 border-b">{catGroup}</td></tr>
                                               {itemsInGroup.map((item, i) => (
                                                   <tr key={i} className="border-b border-gray-200">
                                                       <td className="p-2 text-xs text-gray-400">{item.category}</td>
                                                       <td className="p-2 font-bold">{item.type}</td>
                                                       <td className="p-2">{item.style} - {item.spec}</td>
                                                       <td className="p-2">{item.finish}</td>
+                                                      <td className="p-2">{item.acousticContribution || ''}</td>
                                                       <td className="text-center p-2">{item.qty}</td>
                                                   </tr>
                                               ))}
@@ -1500,6 +2203,7 @@ const App = () => {
                                           <td className="p-2 font-bold">{item.type}</td>
                                           <td className="p-2">{item.style} - {item.spec}</td>
                                           <td className="p-2">{item.finish}</td>
+                                          <td className="p-2">{item.acousticContribution || ''}</td>
                                           <td className="text-center p-2">{item.qty}</td>
                                       </tr>
                                   ))}
@@ -1526,7 +2230,7 @@ const App = () => {
       <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-4 md:px-8 sticky top-0 z-40">
         <div className="flex items-center gap-2 font-bold text-lg md:text-xl text-gray-900">
           <ShieldCheck className="text-indigo-600" />
-          <span>SpecSmart <span className="text-xs text-gray-400 font-normal ml-2">v2.0 Enterprise</span></span>
+          <span>SpecSmart <span className="text-xs text-gray-400 font-normal ml-2">v1.1</span></span>
         </div>
         <div className="flex gap-4 items-center">
             {view === 'wizard' && <span className="text-xs text-gray-400">{exportStatus || saveStatus}</span>}
@@ -1557,7 +2261,7 @@ const App = () => {
       {view === 'wizard' && getProj() && (
         <div className="bg-white border-b border-gray-200 px-4 md:px-8 py-3 flex flex-col md:flex-row items-start md:items-center justify-between sticky top-16 z-30 shadow-sm gap-3">
           <div className="flex flex-wrap items-center gap-2 md:gap-4">
-            <span className="font-bold text-base md:text-lg">{getProj().name}</span>
+            <span className="font-bold text-base md:text-lg">{getProj().name?.trim() || "New Project"}</span>
             <span className="px-2 py-0.5 border rounded text-xs md:text-sm text-gray-500 bg-white whitespace-nowrap">{getProj().standard}</span>
             <span className="px-2 py-0.5 border rounded text-xs md:text-sm text-gray-500 bg-white whitespace-nowrap">{getProj().type}</span>
           </div>
@@ -1572,6 +2276,16 @@ const App = () => {
               <X size={16} /> Close
             </button>
           </div>
+        </div>
+      )}
+      {view === 'wizard' && (
+        <div className="bg-slate-900/95 text-white px-4 md:px-8 py-4 flex flex-col md:flex-row gap-3 justify-center items-stretch shadow-inner">
+          {HERO_STATS.map((stat) => (
+            <div key={stat.label} className="flex-1 min-w-[140px] bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-center">
+              <div className="text-lg font-extrabold tracking-tight">{stat.value}</div>
+              <div className="text-[11px] uppercase tracking-[0.3em] text-white/60">{stat.label}</div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -1678,7 +2392,13 @@ const App = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="flex flex-col gap-1">
                         <label className="text-xs font-bold uppercase text-gray-600">Project Name</label>
-                        <input type="text" value={getProj().name} onChange={(e) => { const updated = projects.map(p => p.id === currentId ? {...p, name: e.target.value} : p); setProjects(updated); }} className="p-2.5 border rounded-md" />
+                        <input
+                          type="text"
+                          placeholder="New Project"
+                          value={getProj().name}
+                          onChange={(e) => { const updated = projects.map(p => p.id === currentId ? {...p, name: e.target.value} : p); setProjects(updated); }}
+                          className="p-2.5 border rounded-md placeholder-gray-400"
+                        />
                       </div>
                       <div className="flex flex-col gap-1">
                         <label className="text-xs font-bold uppercase text-gray-600">Facility Type</label>
@@ -1757,9 +2477,26 @@ const App = () => {
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 md:p-6 animate-slideUp">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
                   <h2 className="text-xl font-bold">Door Schedule</h2>
-                  <button onClick={() => openDoorModal()} className="w-full sm:w-auto px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 font-medium flex items-center justify-center gap-2">
-                    <PlusCircle size={18} /> Add Door
-                  </button>
+                  <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                    <button onClick={() => openDoorModal()} className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 font-medium flex items-center justify-center gap-2 whitespace-nowrap">
+                      <PlusCircle size={18} />
+                      <span>Add Door</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        const proj = getProj();
+                        if (!proj?.doors.length) {
+                          alert("Add at least one door to use bulk assignment.");
+                          return;
+                        }
+                        const firstId = proj.doors[0].id;
+                        setBulkModal({ isOpen: true, templateId: firstId, markPrefix: proj.doors[0].mark, locationsText: "" });
+                      }}
+                      className="flex-1 px-4 py-2 border border-indigo-200 text-indigo-700 rounded-md hover:bg-indigo-50 font-medium"
+                    >
+                      Bulk Assign
+                    </button>
+                  </div>
                 </div>
 
                 {getProj().doors.length === 0 ? (
@@ -1789,12 +2526,35 @@ const App = () => {
                             <td className="p-3 border-b">
                                 <span className="font-semibold text-gray-700">{d.roomName}</span>
                                 <div className="text-xs text-gray-400">{d.zone} • Lvl {d.level}</div>
+                                {d.additionalLocations?.length > 0 && (
+                                  <div className="text-[11px] text-indigo-600 font-semibold mt-1">+{d.additionalLocations.length} more locations</div>
+                                )}
                             </td>
                             <td className="p-3 border-b">{d.qty}</td>
                             <td className="p-3 border-b">{d.width} x {d.height}</td>
                             <td className="p-3 border-b"><span className={`px-2 py-0.5 rounded text-xs font-bold ${d.fire > 0 ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600'}`}>{d.fire} min</span></td>
-                            <td className="p-3 border-b text-sm text-gray-500">{d.stc ? `${d.stc} dB` : '-'}</td>
-                            <td className="p-3 border-b text-sm">{d.material} / {d.config}</td>
+                            <td className="p-3 border-b text-sm text-gray-500">
+                                {d.stc ? (
+                                  <div className="flex flex-col gap-0.5">
+                                    <span>{d.stc} dB</span>
+                                    {parseInt(d.stc, 10) >= ACOUSTIC_THRESHOLD && (
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-semibold">STC Package</span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  '-'
+                                )}
+                            </td>
+                            <td className="p-3 border-b text-sm">
+                                <div className="flex flex-col gap-0.5">
+                                  <span>{d.material} / {d.config}</span>
+                                  {d.ada && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-teal-50 text-teal-700 text-[10px] font-semibold w-fit">
+                                      <Accessibility size={12}/> ADA
+                                    </span>
+                                  )}
+                                </div>
+                            </td>
                             <td className="p-3 border-b">
                               <div className="flex gap-1">
                                 <button onClick={() => duplicateDoor(d.id)} className="p-2 hover:bg-gray-100 rounded text-gray-500" title="Bulk Duplicate"><Copy size={16} /></button>
@@ -1851,6 +2611,9 @@ const App = () => {
                         const repDoor = getProj().doors.find(d => s.doors.includes(d.id));
                         const doorsInSet = getProj().doors.filter(d => s.doors.includes(d.id));
                         const isGlassOnlySet = doorsInSet.length > 0 && doorsInSet.every(d => d.material === 'Glass');
+                        const setMaterials = Array.from(new Set(doorsInSet.map(d => d.material)));
+                        const setProfile = buildSetProfile(doorsInSet);
+                        const validationWarnings = getSetWarnings(s, setProfile);
                         return (
                       <div key={s.id} className="mb-12">
                         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-2">
@@ -1875,8 +2638,8 @@ const App = () => {
                                 {/* Table Container */}
                                 <div className="border border-gray-200 rounded-lg overflow-hidden mb-4 overflow-x-auto">
                                 <div className="min-w-[700px]">
-                                    <div className="grid grid-cols-[30px_60px_60px_140px_140px_100px_1fr_60px_40px] bg-gray-50 border-b border-gray-200 p-3 text-xs font-bold text-gray-500 uppercase">
-                                    <div></div><div>Ref</div><div>CSI</div><div>Product Type</div><div>Style</div><div>Finish</div><div>Specification</div><div>Qty</div><div></div>
+                                    <div className="grid grid-cols-[30px_60px_60px_140px_140px_100px_1fr_120px_60px_40px] bg-gray-50 border-b border-gray-200 p-3 text-xs font-bold text-gray-500 uppercase">
+                                    <div></div><div>Ref</div><div>CSI</div><div>Product Type</div><div>Style</div><div>Finish</div><div>Specification</div><div>Acoustic Contribution</div><div>Qty</div><div></div>
                                     </div>
                                     {/* Feature 4: Categorized Hardware List */}
                                     {Object.keys(BHMA_CATEGORIES).map(catGroup => {
@@ -1895,6 +2658,9 @@ const App = () => {
                                                     const catData = PRODUCT_CATALOG[cat];
                                                     const finishes = FINISHES[getProj().standard];
                                                     let typeOptions = catData?.types || [];
+                                                    const signalKey = `${s.id}-${originalIndex}`;
+                                                    const warningActive = lockResetSignals[signalKey] && (Date.now() - lockResetSignals[signalKey] < 4000);
+                                                    let compatibilityMessage = warningActive ? "Lock type reset: previous lock not compatible with selected material." : null;
                                                     if (cat === 'Hinges') {
                                                         if (isGlassOnlySet) typeOptions = typeOptions.filter(t => t.name === 'Patch Fitting');
                                                         else typeOptions = typeOptions.filter(t => t.name !== 'Patch Fitting');
@@ -1909,16 +2675,69 @@ const App = () => {
                                                             }
                                                         } else if (!isGlassOnlySet && effectiveType === 'Patch Fitting') {
                                                             const fallback = typeOptions[0]?.name;
-                                                            if (fallback && fallback !== effectiveType) {
-                                                                setTimeout(() => updateSetItem(s.id, originalIndex, 'type', fallback), 0);
-                                                                effectiveType = fallback;
+                                                                if (fallback && fallback !== effectiveType) {
+                                                                    setTimeout(() => updateSetItem(s.id, originalIndex, 'type', fallback), 0);
+                                                                    effectiveType = fallback;
+                                                                }
                                                             }
+                                                    }
+                                                    if (cat === 'Locks') {
+                                                        const allowedLockNames = getAllowedLockTypesForMaterials(setMaterials);
+                                                        if (allowedLockNames.length > 0) {
+                                                            const filtered = typeOptions.filter(t => allowedLockNames.includes(t.name));
+                                                            if (filtered.length > 0) typeOptions = filtered;
+                                                        }
+                                                        const isAllowed = typeOptions.some(t => t.name === effectiveType);
+                                                        if (!isAllowed && typeOptions.length > 0) {
+                                                            const fallback = typeOptions[0].name;
+                                                            if (fallback && fallback !== effectiveType) {
+                                                                setTimeout(() => {
+                                                                    updateSetItem(s.id, originalIndex, 'type', fallback);
+                                                                    setLockResetSignals(prev => ({ ...prev, [signalKey]: Date.now() }));
+                                                                }, 0);
+                                                                effectiveType = fallback;
+                                                                compatibilityMessage = "Lock type reset: previous lock not compatible with selected material.";
+                                                            }
+                                                            }
+                                                    }
+                                                    if (cat === 'Locks') {
+                                                        let allowed = getAllowedLockTypesForMaterials(setProfile.materials);
+                                                        if (setProfile.requiresPanic) allowed = ["Panic Bar"];
+                                                        else if (setProfile.isEscapeRoute) allowed = allowed.filter(name => !name.toLowerCase().includes('deadbolt'));
+                                                        typeOptions = typeOptions.filter(t => allowed.includes(t.name));
+                                                        if (!typeOptions.some(t => t.name === effectiveType) && typeOptions.length > 0) {
+                                                            const fallback = typeOptions[0].name;
+                                                            setTimeout(() => {
+                                                                updateSetItem(s.id, originalIndex, 'type', fallback);
+                                                                setLockResetSignals(prev => ({ ...prev, [signalKey]: Date.now() }));
+                                                            }, 0);
+                                                            effectiveType = fallback;
+                                                            compatibilityMessage = "Lock type reset: previous lock not compatible with selected material/use.";
                                                         }
                                                     }
-                                                    const styles = (catData?.types.find(t => t.name === effectiveType) || { styles: [] }).styles || [];
+                                                    if (cat === 'Electrified') {
+                                                        let allowedElectrified = getAllowedElectrifiedTypesForMaterials(setProfile.materials);
+                                                        const allowedNames = new Set([...allowedElectrified, ...ELECTRIFIED_AUX_TYPES]);
+                                                        typeOptions = typeOptions.filter(t => allowedNames.has(t.name));
+                                                        if (!typeOptions.some(t => t.name === effectiveType) && typeOptions.length > 0) {
+                                                            const fallback = typeOptions[0].name;
+                                                            setTimeout(() => {
+                                                                updateSetItem(s.id, originalIndex, 'type', fallback);
+                                                                setLockResetSignals(prev => ({ ...prev, [signalKey]: Date.now() }));
+                                                            }, 0);
+                                                            effectiveType = fallback;
+                                                            compatibilityMessage = "Electrified option reset for compliance.";
+                                                        }
+                                                    }
+                                                    const stylesAll = (catData?.types.find(t => t.name === effectiveType) || { styles: [] }).styles || [];
+                                                    let styles = stylesAll;
+                                                    if (cat === 'Electrified' && setProfile.requiresFailSafe) {
+                                                        const filteredStyles = stylesAll.filter(st => st.toLowerCase().includes('fail-safe') || st.toLowerCase().includes('rex'));
+                                                        if (filteredStyles.length > 0) styles = filteredStyles;
+                                                    }
 
                                                     return (
-                                                        <div key={idx} className="grid grid-cols-[30px_60px_60px_140px_140px_100px_1fr_60px_40px] border-b border-gray-100 p-2 items-center hover:bg-gray-50 relative">
+                                                        <div key={idx} className="grid grid-cols-[30px_60px_60px_140px_140px_100px_1fr_120px_60px_40px] border-b border-gray-100 p-2 items-center hover:bg-gray-50 relative">
                                                             <div className="flex justify-center text-gray-400"><HardwareIcon category={cat} /></div>
                                                             {/* Owner View: Read Only */}
                                                             {userRole === 'Owner' ? (
@@ -1929,6 +2748,7 @@ const App = () => {
                                                                     <div className="text-sm text-gray-600">{item.style}</div>
                                                                     <div className="text-sm text-gray-600">{item.finish}</div>
                                                                     <div className="text-sm text-gray-500">{item.spec}</div>
+                                                                    <div className="text-xs text-gray-600">{item.acousticContribution || ""}</div>
                                                                     <div className="text-sm text-gray-900">{item.qty}</div>
                                                                     <div></div>
                                                                 </>
@@ -1936,9 +2756,14 @@ const App = () => {
                                                                 <>
                                                                     <input type="text" value={item.ref} onChange={(e) => updateSetItem(s.id, originalIndex, 'ref', e.target.value)} className="w-full p-1 border rounded text-xs" />
                                                                     <div className="text-xs text-gray-400">{catData?.csi || ""}</div>
-                                                                    <select value={effectiveType} onChange={(e) => updateSetItem(s.id, originalIndex, 'type', e.target.value)} className="w-full p-1 border rounded text-xs bg-white">
-                                                                        {typeOptions.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
-                                                                    </select>
+                                                                    <div className="flex flex-col gap-0.5">
+                                                                        <select value={effectiveType} onChange={(e) => updateSetItem(s.id, originalIndex, 'type', e.target.value)} className="w-full p-1 border rounded text-xs bg-white">
+                                                                            {typeOptions.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
+                                                                        </select>
+                                                                        {(cat === 'Locks' || cat === 'Electrified') && compatibilityMessage && (
+                                                                            <span className="text-[10px] text-orange-600">{compatibilityMessage}</span>
+                                                                        )}
+                                                                    </div>
                                                                     <select value={item.style} onChange={(e) => updateSetItem(s.id, originalIndex, 'style', e.target.value)} className="w-full p-1 border rounded text-xs bg-white">
                                                                         {styles.map(st => <option key={st} value={st}>{st}</option>)}
                                                                     </select>
@@ -1946,6 +2771,13 @@ const App = () => {
                                                                         {finishes.map(f => <option key={f} value={f}>{f}</option>)}
                                                                     </select>
                                                                     <input type="text" value={item.spec} onChange={(e) => updateSetItem(s.id, originalIndex, 'spec', e.target.value)} className="w-full p-1 border rounded text-xs" />
+                                                                    <div className="flex justify-start">
+                                                                        {item.acousticContribution ? (
+                                                                            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[10px] font-semibold">{item.acousticContribution}</span>
+                                                                        ) : (
+                                                                            <span className="text-gray-300 text-[10px]">-</span>
+                                                                        )}
+                                                                    </div>
                                                                     <input type="text" value={item.qty} onChange={(e) => updateSetItem(s.id, originalIndex, 'qty', e.target.value)} className="w-full p-1 border rounded text-xs" />
                                                                     <button onClick={() => deleteSetItem(s.id, originalIndex)} className="text-red-400 hover:text-red-600 flex justify-center p-2"><Trash2 size={14}/></button>
                                                                 </>
@@ -1959,7 +2791,7 @@ const App = () => {
 
                                     {/* Fallback for uncategorized items */}
                                     {s.items.filter(i => !Object.keys(BHMA_CATEGORIES).some(k => BHMA_CATEGORIES[k].includes(i.category))).map((item, idx) => (
-                                        <div key={'other-'+idx} className="grid grid-cols-[30px_60px_60px_140px_140px_100px_1fr_60px_40px] border-b border-gray-100 p-2 items-center hover:bg-gray-50 relative">
+                                        <div key={'other-'+idx} className="grid grid-cols-[30px_60px_60px_140px_140px_100px_1fr_120px_60px_40px] border-b border-gray-100 p-2 items-center hover:bg-gray-50 relative">
                                             <div className="flex justify-center text-gray-400"><HardwareIcon category={item.category} /></div>
                                             <input type="text" value={item.ref} className="w-full p-1 border rounded text-xs" disabled />
                                             <div className="text-xs text-gray-400"></div>
@@ -1967,6 +2799,7 @@ const App = () => {
                                             <div className="text-sm text-gray-600">{item.style}</div>
                                             <div className="text-sm text-gray-600">{item.finish}</div>
                                             <div className="text-sm text-gray-500">{item.spec}</div>
+                                            <div className="text-xs text-gray-600">{item.acousticContribution || ""}</div>
                                             <div className="text-sm text-gray-900">{item.qty}</div>
                                         </div>
                                     ))}
@@ -1977,6 +2810,14 @@ const App = () => {
                                     <button onClick={() => handleAddItemClick(s.id)} className="text-sm font-medium text-indigo-600 hover:underline flex items-center gap-1 mb-4 px-2 py-1">
                                     <PlusCircle size={14}/> Add Item
                                     </button>
+                                )}
+
+                                {validationWarnings.length > 0 && (
+                                    <div className="mt-2 text-sm text-orange-700 bg-orange-50 border border-orange-200 rounded p-2">
+                                        {validationWarnings.map((w, idx) => (
+                                            <div key={idx}>⚠ {w}</div>
+                                        ))}
+                                    </div>
                                 )}
 
                                 <div className="flex flex-col gap-1">
@@ -2097,14 +2938,33 @@ const App = () => {
                     </div>
                     <div className="flex flex-col gap-1">
                         <label className="text-xs font-bold uppercase text-gray-500">Room Name</label>
-                        <SearchableDropdown 
-                            options={FACILITY_DATA[getProj().type]?.usages || []} 
+                        <SearchableDropdown
+                            options={FACILITY_DATA[getProj().type]?.usages || []}
                             value={doorForm.roomName}
-                            onChange={(val) => setDoorForm({...doorForm, roomName: val})}
+                            onChange={(val) => setDoorForm({...doorForm, roomName: val, use: val || doorForm.use})}
                             placeholder="Select or type..."
                         />
                     </div>
                   </div>
+              </div>
+
+              <div className="border border-gray-200 rounded-lg p-4 bg-white">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-bold uppercase text-gray-500">Additional Locations</label>
+                  <button onClick={addAdditionalLocation} className="text-xs text-indigo-600 hover:underline font-semibold">+ Add Location</button>
+                </div>
+                {doorForm.additionalLocations?.length ? (
+                  doorForm.additionalLocations.map((loc, idx) => (
+                    <div key={idx} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto] gap-2 mt-2 items-start">
+                      <input type="text" value={loc.zone} onChange={(e) => updateAdditionalLocation(idx, 'zone', e.target.value)} className="p-2 border rounded" placeholder="Zone" />
+                      <input type="text" value={loc.level} onChange={(e) => updateAdditionalLocation(idx, 'level', e.target.value)} className="p-2 border rounded" placeholder="Level" />
+                      <input type="text" value={loc.roomName} onChange={(e) => updateAdditionalLocation(idx, 'roomName', e.target.value)} className="p-2 border rounded" placeholder="Room Name" />
+                      <button onClick={() => removeAdditionalLocation(idx)} className="text-red-500 text-xs font-bold">Remove</button>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs text-gray-500">Add more zones/levels/rooms that use this exact hardware spec.</p>
+                )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2114,7 +2974,8 @@ const App = () => {
                 </div>
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-bold uppercase text-gray-500">Qty</label>
-                  <input type="number" value={doorForm.qty} onChange={e => setDoorForm({...doorForm, qty: parseInt(e.target.value) || 0})} className="p-2.5 border rounded" />
+                  <input type="number" value={1 + (doorForm.additionalLocations?.length || 0)} readOnly className="p-2.5 border rounded bg-gray-100 text-gray-500" />
+                  <span className="text-[10px] text-gray-500">Calculated from location list</span>
                 </div>
               </div>
 
@@ -2133,16 +2994,37 @@ const App = () => {
                   </div>
                   <div>
                     <label className="text-xs font-bold uppercase text-gray-500">Thickness (mm)</label>
-                    <input type="number" value={doorForm.thickness} onChange={e => setDoorForm({...doorForm, thickness: parseInt(e.target.value) || 0})} className="w-full p-2.5 border rounded" />
+        <input
+          type="number"
+          value={doorForm.thickness}
+          onChange={e => setDoorForm({...doorForm, thickness: parseInt(e.target.value) || 0, thicknessAuto: false})}
+          className="w-full p-2.5 border rounded"
+        />
                   </div>
                   <div>
                     <label className="text-xs font-bold uppercase text-gray-500">Weight (kg) - Auto</label>
                     <div className="relative">
-                        <input type="number" value={doorForm.weight} onChange={e => {setDoorForm({...doorForm, weight: e.target.value});}} className="w-full p-2.5 border rounded bg-gray-50" />
+        <input
+          type="number"
+          value={doorForm.weight}
+          onChange={e => {setDoorForm({...doorForm, weight: parseInt(e.target.value) || 0, weightAuto: false});}}
+          className="w-full p-2.5 border rounded"
+        />
                         <Scale size={14} className="absolute right-3 top-3.5 text-gray-400" />
                     </div>
+                    <div className="text-[10px] text-gray-500 mt-1">Estimated weight; verify with manufacturer</div>
                   </div>
                 </div>
+                {showAdaWarning && (
+                  <div className="mt-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded p-3 flex items-start gap-2">
+                    <AlertTriangle size={16} className="mt-0.5" />
+                    <div>
+                      <div className="font-semibold">ADA Clearance Warning</div>
+                      <div>{adaWarningMessage}</div>
+                      <div className="text-[11px] text-amber-700 mt-1">Clear opening assumes {ADA_CLEARANCE_DEDUCTION_MM}mm deduction for hinges/handles.</div>
+                    </div>
+                  </div>
+                )}
                 {doorHint && <div className="mt-2 text-orange-600 text-sm bg-orange-50 p-2 rounded border border-orange-100 flex items-center gap-2"><AlertTriangle size={14}/> {doorHint}</div>}
               </div>
 
@@ -2216,7 +3098,7 @@ const App = () => {
                 <div>
                   <label className="text-xs font-bold uppercase text-gray-500">Fire Rating</label>
                   <select value={doorForm.fire} onChange={e => setDoorForm({...doorForm, fire: parseInt(e.target.value)})} className="w-full p-2.5 border rounded bg-white">
-                    {getProj().standard === 'ANSI' 
+                    {getProj().standard === 'ANSI'
                       ? <><option value="0">Non-Rated</option><option value="20">20 min</option><option value="45">45 min</option><option value="60">60 min</option><option value="90">90 min</option><option value="180">3 Hour</option></>
                       : <><option value="0">None</option><option value="30">30 min</option><option value="60">60 min</option><option value="90">90 min</option><option value="120">120 min</option></>
                     }
@@ -2228,6 +3110,59 @@ const App = () => {
                     {FACILITY_DATA[getProj().type]?.usages.map(u => <option key={u} value={u}>{u}</option>)}
                   </select>
                 </div>
+              </div>
+
+              {doorForm.config === 'Double' && (
+                <div className="text-[11px] text-gray-500">
+                  {doorForm.fire > 0
+                    ? "Fire-rated pairs default to rebated meeting stiles per EN 1634 / ANSI UL10C."
+                    : "Non-rated pairs use a flush meeting stile between leaves."}
+                </div>
+              )}
+
+              <div className="border border-gray-200 rounded-lg p-4 bg-white mt-4">
+                <div className="flex items-start justify-between gap-2 flex-wrap">
+                  <div>
+                    <label className="text-xs font-bold uppercase text-gray-500">Hardware Control Strategy</label>
+                    <p className="text-xs text-gray-500">
+                      Based on <span className="font-semibold">{doorForm.use || doorForm.roomName || 'this use'}</span> we recommend a{" "}
+                      <span className="font-semibold text-indigo-600">{recommendedIntent}</span> package.
+                    </p>
+                  </div>
+                  <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 rounded-full px-2 py-0.5">ANSI / EN Guidance</span>
+                </div>
+                <div className="grid sm:grid-cols-2 gap-3 mt-3">
+                  {HARDWARE_PACKAGE_OPTIONS.map((opt) => {
+                    const isActive = doorForm.hardwareIntent === opt.id;
+                    const isRecommended = recommendedIntent === opt.id;
+                    return (
+                      <button
+                        type="button"
+                        key={opt.id}
+                        onClick={() => setDoorForm({ ...doorForm, hardwareIntent: opt.id })}
+                        className={`text-left border rounded-lg p-3 transition-all ${
+                          isActive ? 'border-indigo-600 bg-indigo-50 shadow-sm' : 'border-gray-200 hover:border-indigo-300 hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between text-sm font-semibold mb-1">
+                          <span className={isActive ? 'text-indigo-700' : 'text-gray-800'}>{opt.label}</span>
+                          {isRecommended && (
+                            <span className="text-[10px] text-green-600 bg-green-50 px-2 py-0.5 rounded-full font-bold">Recommended</span>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-500 leading-relaxed">{opt.desc}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-gray-500 mt-3">
+                  Electromechanical openings pair ANSI/BHMA A156-grade locks with electric strikes or maglocks, REX sensors, and fail-safe release per EN 1125 / NFPA 101.
+                </p>
+                {doorForm.hardwareIntent !== recommendedIntent && (
+                  <div className="mt-2 text-[11px] text-orange-600">
+                    You selected a {doorForm.hardwareIntent} package even though the usage leans {recommendedIntent}. Confirm this is intentional for the project scope.
+                  </div>
+                )}
               </div>
 
               {/* Documentation Notes */}
@@ -2292,6 +3227,52 @@ const App = () => {
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {bulkModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 sm:p-6">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl flex flex-col">
+            <div className="p-4 md:p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50 rounded-t-xl">
+              <h3 className="text-lg font-bold">Bulk Assign Door Specification</h3>
+              <button onClick={() => setBulkModal({ isOpen: false, templateId: "", markPrefix: "", locationsText: "" })} className="text-gray-400 hover:text-gray-600"><X size={20}/></button>
+            </div>
+            <div className="p-4 md:p-6 space-y-4 overflow-y-auto">
+              <p className="text-sm text-gray-600">Select a template door and provide locations (zone | level | room) to replicate its specification.</p>
+              <div>
+                <label className="text-xs font-bold uppercase text-gray-500">Template Door</label>
+                <select value={bulkModal.templateId} onChange={(e) => {
+                  const template = getProj().doors.find(d => d.id === e.target.value);
+                  setBulkModal(prev => ({
+                    ...prev,
+                    templateId: e.target.value,
+                    markPrefix: template?.mark || prev.markPrefix
+                  }));
+                }} className="w-full p-2 border rounded bg-white">
+                  {getProj().doors.map(d => <option key={d.id} value={d.id}>{d.mark} - {d.roomName}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-bold uppercase text-gray-500">Mark Prefix</label>
+                <input type="text" value={bulkModal.markPrefix} onChange={(e) => setBulkModal(prev => ({ ...prev, markPrefix: e.target.value }))} className="w-full p-2 border rounded" placeholder="e.g. D-100" />
+                <p className="text-[11px] text-gray-400 mt-1">Unique marks will be generated from this prefix.</p>
+              </div>
+              <div>
+                <label className="text-xs font-bold uppercase text-gray-500">Locations</label>
+                <textarea value={bulkModal.locationsText} onChange={(e) => setBulkModal(prev => ({ ...prev, locationsText: e.target.value }))} className="w-full p-2 border rounded h-32" placeholder="Tower A | Lvl 02 | Meeting Room&#10;Tower B | Lvl 05 | Boardroom" />
+                <p className="text-[11px] text-gray-500 mt-1">Provide one location per line using "Zone | Level | Room" format. Leave a part blank to reuse the template value.</p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setBulkModal({ isOpen: false, templateId: "", markPrefix: "", locationsText: "" })} className="px-4 py-2 text-sm border rounded">Cancel</button>
+                <button
+                  onClick={() => handleBulkCreate()}
+                  className="px-4 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                >
+                  Create Doors
+                </button>
               </div>
             </div>
           </div>
