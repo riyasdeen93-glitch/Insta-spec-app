@@ -7,7 +7,7 @@ import {
   Menu, ChevronDown, Search, Info, Flame, Accessibility, RotateCcw,
   Eye, Layers, UserCircle, History, Box, Download, Library, MoveHorizontal,
   Lock, Settings, MousePointer, Power, Printer, FileText, Volume2, Scale,
-  BookOpen, UploadCloud, Wand2
+  BookOpen, UploadCloud, Wand2, ShieldCheck, Wrench, RefreshCw
 } from 'lucide-react';
 
 // --- UTILS ---
@@ -73,12 +73,92 @@ const POSSIBLE_DOOR_SET_COMBINATIONS =
   DOOR_CONFIGS.length *
   HANDING_OPTIONS.length;
 const HERO_STATS = [
-  { label: "Door Set Profiles", value: POSSIBLE_DOOR_SET_COMBINATIONS.toLocaleString() },
-  { label: "Modeled Use Cases", value: UNIQUE_DOOR_USES.length.toString() },
-  { label: "Export Formats", value: "BIM • PDF • XLSX" },
-  { label: "Door Materials", value: DOOR_MATERIALS.length.toString() },
-  { label: "Handing Options", value: HANDING_OPTIONS.length.toString() },
-  { label: "Facility Programs", value: Object.keys(FACILITY_DATA).length.toString() }
+  {
+    id: "profiles",
+    value: 1216,
+    metric: "Doorset Profiles",
+    subtext: "Ready-to-configure templates for fast project setup.",
+    icon: Layers
+  },
+  {
+    id: "scenarios",
+    value: UNIQUE_DOOR_USES.length,
+    metric: "Use Case Scenarios",
+    subtext: "Preset rules based on building function.",
+    icon: Brain
+  },
+  {
+    id: "facilities",
+    value: Object.keys(FACILITY_DATA).length,
+    metric: "Facility Types",
+    subtext: "Office, Healthcare, Education, Airport, Hotel, Residential.",
+    icon: Building
+  },
+  {
+    id: "materials",
+    value: DOOR_MATERIALS.length,
+    metric: "Door Materials",
+    subtext: "Timber, Metal, Glass, Aluminum.",
+    icon: Box
+  },
+  {
+    id: "exports",
+    value: 3,
+    metric: "Export Formats",
+    subtext: "BIM, PDF, XLSX deliverables in one click.",
+    icon: FileSpreadsheet
+  },
+  {
+    id: "standards",
+    value: 2,
+    metric: "Global Standards",
+    subtext: "EN and ANSI compliance support.",
+    icon: Globe
+  },
+  {
+    id: "dashboard",
+    value: 1,
+    metric: "Project Dashboard",
+    subtext: "All projects in one clean, central view.",
+    icon: LayoutGrid
+  }
+];
+
+const INSIGHT_CARDS = [
+  {
+    label: "Live Insights",
+    title: "Compliance Pulse",
+    body: "Provides real-time checks against commonly referenced safety and accessibility criteria."
+  },
+  {
+    label: "Adaptive Visuals",
+    title: "Material Intelligence",
+    body: "Switch Timber -> Glass -> Aluminum and see hinge, lock, and seal graphics update instantly before specifying."
+  }
+];
+
+const WORKFLOW_STEPS_CONTENT = [
+  { title: "Project Setup", body: "Define facility, fire-rating, and jurisdiction rules -- the rule engine tunes itself instantly." },
+  { title: "Door Schedule", body: "Capture dimensions, STC, ADA, and access logic. Additional locations auto-adjust quantity." },
+  { title: "Hardware Sets", body: "Door Hardware Layout Preview shows hinges, closers, maglocks, and panic trim before specification." },
+  { title: "Validation & Review", body: "Compliance Pulse verifies life-safety, then exports BIM, PDF, and Excel packages in one click." }
+];
+const WHY_INSTASPEC_CARDS = [
+  {
+    title: "Compliance Support",
+    body: "Helps align hardware with common safety standards.",
+    icon: ShieldCheck
+  },
+  {
+    title: "Hardware Library",
+    body: "Central library of locks, hinges, closers, and access devices.",
+    icon: Wrench
+  },
+  {
+    title: "Team Alignment",
+    body: "Keeps door, hardware, and export data in sync.",
+    icon: RefreshCw
+  }
 ];
 const REVIEW_NOTICE =
   "Notice: All auto-generated door hardware content must be reviewed and approved by a qualified subject-matter expert before it is shared or issued. Proceed only if you acknowledge this requirement.";
@@ -86,16 +166,16 @@ const REVIEW_NOTICE =
 // BHMA Categorization Helper
 const BHMA_CATEGORIES = {
     "Hanging": ["Hinges"],
-    "Securing": ["Locks", "Cylinders", "Accessories", "Electrified"],
+    "Securing": ["Locks", "Cylinders", "Electrified"],
     "Controlling": ["Closers", "Stops", "Handles"],
-    "Protecting": ["Seals", "Accessories"]
+    "Protecting": ["Seals", "Accessories", "Protecting"]
 };
 
 const getBHMACategory = (cat) => {
     if (["Hinges"].includes(cat)) return "Hanging the Door";
-    if (["Locks", "Cylinders"].includes(cat)) return "Securing the Door";
+    if (["Locks", "Cylinders", "Electrified"].includes(cat)) return "Securing the Door";
     if (["Closers", "Stops", "Handles", "Auto Operator"].includes(cat)) return "Controlling the Door";
-    if (["Seals", "Accessories", "Kick Plate", "Threshold"].includes(cat)) return "Protecting the Door";
+    if (["Seals", "Accessories", "Protecting", "Kick Plate", "Threshold"].includes(cat)) return "Protecting the Door";
     return "Other Hardware";
 };
 
@@ -136,7 +216,8 @@ const PRODUCT_CATALOG = {
     types: [
       { name: "Lever Handle", styles: ["Return to Door", "Straight", "Flat Bar", "Anti-Ligature"] },
       { name: "Pull Handle", styles: ["D-Pull", "T-Bar", "Offset Pull", "Flush Pull"] },
-      { name: "Push Plate", styles: ["Square Corner", "Radius Corner"] }
+      { name: "Push Plate", styles: ["Square Corner", "Radius Corner"] },
+      { name: "Panic Push Pull Handle", styles: ["L-Shaped", "Tube Pull"] }
     ]
   },
   "Stops": {
@@ -166,9 +247,14 @@ const PRODUCT_CATALOG = {
   "Accessories": {
       csi: "08 71 00",
       types: [
-          { name: "Signage", styles: ["Disc", "Rectangular"] },
           { name: "Kick Plate", styles: ["Satin Stainless", "Polished Stainless", "Brass"] },
           { name: "Flush Bolt", styles: ["Lever Action", "Slide Action"] }
+      ]
+  },
+  "Protecting": {
+      csi: "08 79 00",
+      types: [
+          { name: "Signage", styles: ["Disc", "Rectangular"] }
       ]
   },
   "Electrified": {
@@ -344,12 +430,38 @@ const getSetWarnings = (set, profile) => {
       warnings.push("ADA-labeled doors require lever hardware or panic devices that allow single-hand operation.");
     }
   }
+  if (profile.materials.includes("Glass")) {
+    const glassHasLever = handles.some((h) => (h.type || "").toLowerCase().includes("lever"));
+    if (glassHasLever) {
+      const hasCenterPatch = locks.some(
+        (l) =>
+          (l.type || "").toLowerCase() === "patch lock" &&
+          (l.style || "").toLowerCase().includes("center")
+      );
+      if (!hasCenterPatch) {
+        warnings.push("Glass doors with lever handles must pair with a center patch lock that supports lever trim.");
+      }
+    }
+    if (profile.requiresPanic) {
+      const hasGlassPanicHandle = handles.some((h) => (h.type || "").toLowerCase().includes("panic push pull"));
+      if (!hasGlassPanicHandle) {
+        warnings.push("Glass escape doors require an L-shaped panic push/pull handle instead of a traditional panic bar.");
+      }
+    }
+  }
   return warnings;
 };
 
 const FINISHES = {
   "ANSI": ["630 (Satin Stainless)", "629 (Polished Stainless)", "626 (Satin Chrome)", "605 (Polished Brass)", "613 (Oil Rubbed Bronze)", "622 (Matte Black)"],
-  "EN": ["SSS (Satin Stainless)", "PSS (Polished Stainless)", "SAA (Satin Anodized)", "PB (Polished Brass)", "RAL 9005 (Black)", "RAL 9016 (White)"]
+  "EN": ["SSS (Satin Stainless)", "PSS (Polished Stainless)", "SCP (Satin Chrome Plate)", "PB (Polished Brass)", "RAL 9005 (Black)", "RAL 9016 (White)"]
+};
+
+const CATEGORY_FINISH_OPTIONS = {
+  Cylinders: {
+    ANSI: ["SNP (Satin Nickel Plate)", "Natural Brass", "PB (Polished Brass)", "622 (Matte Black)"],
+    EN: ["SNP (Satin Nickel Plate)", "Natural Brass", "PB (Polished Brass)", "RAL 9005 (Black)"]
+  }
 };
 
 const CATEGORY_REF_PREFIX = {
@@ -361,12 +473,25 @@ const CATEGORY_REF_PREFIX = {
   Seals: "GS",
   Cylinders: "C",
   Accessories: "A",
+  Protecting: "P",
   Electrified: "E"
+};
+
+const getCategoryFinishList = (category, standard = "ANSI") => {
+  const overrides = CATEGORY_FINISH_OPTIONS[category];
+  if (!overrides) return null;
+  return overrides[standard] || overrides.default || null;
 };
 
 const getDefaultFinishForStandard = (standard = "ANSI") => {
   const finishSet = FINISHES[standard] || FINISHES["ANSI"];
   return finishSet?.[0] || "630 (Satin Stainless)";
+};
+
+const getDefaultFinishForCategory = (category, standard = "ANSI") => {
+  const list = getCategoryFinishList(category, standard);
+  if (list?.length) return list[0];
+  return getDefaultFinishForStandard(standard);
 };
 
 const getTypeDefaultStyle = (category, type) => {
@@ -498,10 +623,167 @@ const computeSetContext = (doors = [], items = []) => {
   return { needsAcoustic, isDouble, hasVision, hasLouver };
 };
 
+const applyFinishOverrides = (items = [], standard = "ANSI") => {
+  return items.map((item) => {
+    const allowed = getCategoryFinishList(item.category, standard);
+    if (allowed?.length && !allowed.includes(item.finish)) {
+      return { ...item, finish: allowed[0] };
+    }
+    return item;
+  });
+};
+
 const sanitizeHardwareItems = (items = [], standard = "ANSI", context = {}) => {
   const afterMaglock = ensureMaglockSupportItems(items, standard);
   const afterHinge = enforceSingleHinge(afterMaglock);
-  return ensureAcousticItems(afterHinge, { ...context, standard });
+  const afterAcoustic = ensureAcousticItems(afterHinge, { ...context, standard });
+  return applyFinishOverrides(afterAcoustic, standard);
+};
+
+const usePrefersReducedMotion = () => {
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const handler = () => setPrefersReducedMotion(mediaQuery.matches);
+    if (mediaQuery.addEventListener) mediaQuery.addEventListener("change", handler);
+    else mediaQuery.addListener(handler);
+    return () => {
+      if (mediaQuery.removeEventListener) mediaQuery.removeEventListener("change", handler);
+      else mediaQuery.removeListener(handler);
+    };
+  }, []);
+
+  return prefersReducedMotion;
+};
+
+const CARD_BASE_CLASSES =
+  "rounded-3xl border border-white/10 bg-gradient-to-b from-slate-900/80 to-slate-900/30 text-white shadow-lg shadow-black/30 backdrop-blur-sm";
+
+const CountUpNumber = ({ value = 0, duration = 1200, className = "" }) => {
+  const prefersReducedMotion = usePrefersReducedMotion();
+  const [displayValue, setDisplayValue] = useState(prefersReducedMotion ? value : 0);
+
+  useEffect(() => {
+    if (prefersReducedMotion) {
+      setDisplayValue(value);
+      return;
+    }
+    let start;
+    let raf;
+    const step = (timestamp) => {
+      if (!start) start = timestamp;
+      const progress = Math.min((timestamp - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplayValue(Math.round(eased * value));
+      if (progress < 1) {
+        raf = requestAnimationFrame(step);
+      }
+    };
+    raf = requestAnimationFrame(step);
+    return () => raf && cancelAnimationFrame(raf);
+  }, [value, duration, prefersReducedMotion]);
+
+  return <span className={className}>{displayValue.toLocaleString()}</span>;
+};
+
+const FadeCard = ({ children, className = "", delay = 0, ariaLabel, paddingClass = "p-5" }) => {
+  const prefersReducedMotion = usePrefersReducedMotion();
+  const [visible, setVisible] = useState(prefersReducedMotion);
+
+  useEffect(() => {
+    if (prefersReducedMotion) {
+      setVisible(true);
+      return;
+    }
+    setVisible(false);
+    const timeout = window.setTimeout(() => setVisible(true), delay);
+    return () => window.clearTimeout(timeout);
+  }, [prefersReducedMotion, delay]);
+
+  const motionClass = prefersReducedMotion
+    ? ""
+    : visible
+    ? "opacity-100 translate-y-0"
+    : "opacity-0 translate-y-3";
+
+  return (
+    <div
+      aria-label={ariaLabel}
+      className={`${CARD_BASE_CLASSES} ${paddingClass} ${motionClass} transition-all duration-500 ease-out motion-safe:hover:-translate-y-1 motion-safe:hover:shadow-[0_25px_60px_rgba(7,89,133,0.35)] ${className}`}
+    >
+      {children}
+    </div>
+  );
+};
+
+const WorkflowStepper = ({ steps = [] }) => {
+  const prefersReducedMotion = usePrefersReducedMotion();
+  const [lineReady, setLineReady] = useState(prefersReducedMotion);
+
+  useEffect(() => {
+    if (prefersReducedMotion) {
+      setLineReady(true);
+      return;
+    }
+    const timer = window.setTimeout(() => setLineReady(true), 120);
+    return () => window.clearTimeout(timer);
+  }, [prefersReducedMotion]);
+
+  return (
+    <div className="relative mt-2">
+      <div
+        className="absolute left-5 sm:left-6 top-2 bottom-2 w-px bg-white/15 origin-top rounded-full"
+        style={{
+          transform: lineReady ? "scaleY(1)" : "scaleY(0)",
+          transition: prefersReducedMotion ? "none" : "transform 900ms ease 150ms"
+        }}
+        aria-hidden="true"
+      />
+      <div className="space-y-6">
+        {steps.map((step, index) => {
+          const stepNumber = step.stepNumber ?? index + 1;
+          const isActive = Boolean(step.isActive);
+          return (
+            <div key={step.title} className="relative pl-12 sm:pl-16 group">
+              <div
+                className={`absolute left-5 sm:left-6 top-6 bottom-6 w-px rounded-full pointer-events-none transition-opacity duration-300 ${isActive ? 'opacity-90' : 'opacity-0 group-hover:opacity-80'}`}
+                style={{ backgroundColor: "rgba(56,189,248,0.65)" }}
+                aria-hidden="true"
+              />
+              <div className="absolute left-0 sm:left-1 top-1/2 -translate-y-1/2">
+                <div
+                  className={`flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 rounded-full border-2 text-sm sm:text-base font-semibold transition-all duration-300 shadow-lg ${
+                    isActive
+                      ? "bg-sky-400 text-slate-950 border-sky-200 shadow-sky-500/40"
+                      : "bg-slate-950 text-white border-white/25 group-hover:bg-sky-300 group-hover:text-slate-950 group-hover:border-sky-200"
+                  }`}
+                >
+                  {stepNumber}
+                </div>
+              </div>
+              <FadeCard
+                delay={index * 120}
+                ariaLabel={`${stepNumber} ${step.title}`}
+                className={`pl-4 sm:pl-6 overflow-visible transition-transform duration-300 group-hover:scale-[1.02] ${
+                  isActive ? "ring-1 ring-sky-400/50 shadow-sky-500/40" : ""
+                }`}
+              >
+                <div className="space-y-1" aria-current={isActive ? "step" : undefined}>
+                  <div className="text-white font-semibold text-lg">{step.title}</div>
+                  <p className="text-sm text-white/70 leading-relaxed">{step.body}</p>
+                </div>
+              </FadeCard>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 };
 
 const deriveSetIntentFromItems = (items = []) => {
@@ -539,6 +821,7 @@ const HardwareIcon = ({ category }) => {
     if (category === "Handles") return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 10h10a2 2 0 0 1 2 2v6"/><circle cx="4" cy="12" r="2"/></svg>;
     if (category === "Stops") return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22a8 8 0 0 0 0-16 8 8 0 0 0 0 16z"/><circle cx="12" cy="14" r="3"/></svg>;
     if (category === "Seals") return <Volume2 size={16}/>;
+    if (category === "Protecting" || category === "Accessories") return <Info size={16}/>;
     return <Box size={16}/>;
 };
 
@@ -815,6 +1098,8 @@ const DoorPreview = ({ door, hardwareSet }) => {
   const closers = itemsByCategory('Closers');
   const stops = itemsByCategory('Stops');
   const seals = itemsByCategory('Seals');
+  const protectingItems = itemsByCategory('Protecting');
+  const signageItems = protectingItems.filter((item) => (item.type || '').toLowerCase() === 'signage');
   const hingeItems = itemsByCategory('Hinges');
   const hingeDescriptor = hingeItems.map(i => `${i.name || ''} ${i.type || ''} ${i.style || ''}`).join(' ').toLowerCase();
   const hingesPerLeaf = (() => {
@@ -1070,6 +1355,39 @@ const DoorPreview = ({ door, hardwareSet }) => {
             <rect x={strikeEdgeX - 2} y={doorY + doorHeight - 26} width="4" height="16" rx="1" fill={hingeOutline} />
           </>
         )}
+        {!isInactive && signageItems.length > 0 && signageItems.map((item, idx) => {
+          const style = (item.style || "").toLowerCase();
+          const baseY = doorY + 54 + idx * 18;
+          const centerX = x + width / 2;
+          if (style.includes("disc")) {
+            return (
+              <circle
+                key={`sign-disc-${idx}`}
+                cx={centerX}
+                cy={baseY}
+                r="10.5"
+                fill="#4b5563"
+                stroke="#1f2937"
+                strokeWidth="1"
+                opacity="0.85"
+              />
+            );
+          }
+          return (
+            <rect
+              key={`sign-rect-${idx}`}
+              x={centerX - 15}
+              y={baseY - 9}
+              width="30"
+              height="18"
+              rx="2"
+              fill="#4b5563"
+              stroke="#1f2937"
+              strokeWidth="1"
+              opacity="0.85"
+            />
+          );
+        })}
         {hasViewer && !isGlass && !isInactive && (
           <circle cx={x + width / 2} cy={doorY + 36} r="3" fill="#dbeafe" stroke={hardwareColor} strokeWidth="0.8" />
         )}
@@ -1269,114 +1587,153 @@ const LandingPage = ({ onStart, hasProjects }) => {
     </nav>
 
     <main className="relative z-10 flex-1 w-full flex flex-col">
-      <div className="w-full max-w-6xl mx-auto px-6 md:px-12 py-10 md:py-16 space-y-12">
-        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,460px)] gap-12 items-start">
-          <div className="space-y-8">
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 text-xs uppercase tracking-widest text-white/70">
-              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" /> For Architects • Consultants • Specifiers
+      <div className="w-full max-w-6xl mx-auto px-6 md:px-12 py-10 md:py-16">
+        <div className="grid gap-12 lg:gap-14 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,420px)] items-start">
+          <section className="order-1 lg:col-start-1 lg:row-start-1 space-y-8">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 text-xs uppercase tracking-[0.4em] text-white/70">
+              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" /> For Architects / Consultants / Specifiers
             </div>
-          <div>
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-black leading-tight text-white">
-              Specify door hardware with confidence in <span className="text-sky-300">minutes</span>, not days.
-            </h1>
-            <p className="mt-4 text-lg md:text-xl text-white/70">
-              InstaSpec unifies code compliance, hardware libraries, and visual coordination into a single premium workspace.
-              Build ANSI/EN ready schedules, visualize door sets, and export polished specs instantly.
-            </p>
-          </div>
-          <div className="flex flex-col sm:flex-row gap-4">
-            <button
-              onClick={onStart}
-              className="px-8 py-4 bg-sky-400 text-slate-950 font-bold rounded-xl shadow-xl shadow-sky-500/30 flex items-center justify-center gap-2 text-lg hover:bg-sky-300 transition"
-            >
-              Start Configuring <ArrowRight className="w-5 h-5" />
-            </button>
-            <button
-              onClick={() => alert('Demo replay coming soon.')}
-              className="px-8 py-4 border border-white/20 rounded-xl font-semibold text-lg text-white/80 hover:bg-white/10 transition flex items-center justify-center gap-2"
-            >
-              View Demo
-            </button>
-          </div>
-          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-white/80">
-            {[
-              { title: "Code-Compliant Hardware Logic", desc: "Supports ANSI / EN rules and life-safety requirements." },
-              { title: "Door Hardware Layout Preview", desc: "See hardware placement clearly before specs are finalized." },
-              { title: "Smart Door Scheduling", desc: "Includes STC, ADA, and access-control fields automatically." },
-              { title: "One-Click Tender + BIM Exports", desc: "Generate PDF, Excel, and BIM-ready files instantly." },
-              { title: "Application-Based Door Presets", desc: "Prefill door types based on building use like Healthcare or Education." },
-              { title: "Project Dashboard Management", desc: "Manage multiple projects with complete control." }
-            ].map((usp) => (
-              <li key={usp.title} className="flex items-start gap-2 bg-white/5 rounded-lg p-3 border border-white/5">
-                <Check className="text-emerald-400 w-4 h-4 mt-0.5" />
-                <div>
-                  <div className="font-semibold text-white">{usp.title}</div>
-                  <div className="text-white/70">{usp.desc}</div>
-                </div>
-              </li>
-            ))}
-          </ul>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {HERO_STATS.map((stat) => (
-              <div
-                key={stat.label}
-                className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-5 border border-white/10 flex flex-col gap-3 shadow-lg shadow-black/40"
+            <div>
+              <h1 className="text-4xl md:text-5xl lg:text-6xl font-black leading-tight text-white">
+                Specify door hardware with confidence in <span className="text-sky-300">minutes</span>, not days.
+              </h1>
+              <p className="mt-4 text-lg md:text-xl text-white/70 max-w-2xl">
+                InstaSpec unifies code compliance, hardware libraries, and visual coordination into a single premium workspace.
+                Build ANSI/EN ready schedules, visualize door sets, and export polished specs instantly.
+              </p>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-4">
+              <button
+                onClick={onStart}
+                className="px-8 py-4 bg-sky-400 text-slate-950 font-bold rounded-xl shadow-xl shadow-sky-500/30 flex items-center justify-center gap-2 text-lg hover:bg-sky-300 transition"
               >
-                <div className="flex items-center justify-between">
-                  <div className="text-xs uppercase tracking-[0.35em] text-white/50">{stat.label}</div>
-                  <span className="text-[11px] uppercase tracking-[0.3em] text-white/60">verified</span>
-                </div>
-                <div className="text-3xl font-black text-white">
-                  {stat.value}
-                </div>
-                <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-sky-500 to-indigo-500 w-full animate-pulse-slow"></div>
-                </div>
-              </div>
-            ))}
-          </div>
-          </div>
-
-        <div className="w-full bg-white/5 border border-white/10 rounded-[30px] p-6 shadow-2xl shadow-black/50 space-y-6">
-            <div className="space-y-4">
-              <div className="text-xs uppercase tracking-[0.4em] text-white/40">Instant Insights</div>
-              <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-400/20 to-emerald-600/10 border border-white/10 shadow-lg">
-                <div className="text-xs uppercase tracking-[0.3em] text-emerald-200">Live scoring</div>
-                <div className="text-white font-semibold text-xl mt-2">Compliance Pulse</div>
-                <p className="text-white/70 mt-1 text-sm">
-                  Every submitted door schedule is evaluated against life-safety, ADA, and fire-door logic in milliseconds.
-                </p>
-              </div>
-              <div className="p-4 rounded-2xl bg-gradient-to-br from-sky-400/15 to-sky-600/10 border border-white/10 shadow-lg">
-                <div className="text-xs uppercase tracking-[0.3em] text-sky-200">Adaptive visuals</div>
-                <div className="text-white font-semibold text-xl mt-2">Material Intelligence</div>
-                <p className="text-white/70 mt-1 text-sm">
-                  Switch Timber → Glass → Aluminum and see hinge, lock, and seal graphics update instantly before specifying.
-                </p>
-              </div>
+                Start Configuring <ArrowRight className="w-5 h-5" />
+              </button>
+              <button
+                onClick={() => alert('Demo replay coming soon.')}
+                className="px-8 py-4 border border-white/20 rounded-xl font-semibold text-lg text-white/80 hover:bg-white/10 transition flex items-center justify-center gap-2"
+              >
+                View Demo
+              </button>
             </div>
+          </section>
+
+          <aside className="order-2 lg:col-start-2 lg:row-span-2 space-y-10 lg:space-y-12 flex flex-col h-full">
             <div className="space-y-4">
-              <div className="text-xs uppercase tracking-[0.4em] text-white/40">Workflow Snapshot</div>
-              <div className="flex flex-col gap-4">
-                {[
-                  { title: "Project Setup", desc: "Define facility, fire-rating, and jurisdiction rules—the rule engine tunes itself instantly." },
-                  { title: "Door Schedule", desc: "Capture dimensions, STC, ADA, and access logic. Additional locations auto-adjust quantity." },
-                  { title: "Hardware Sets", desc: "Door Hardware Layout Preview shows hinges, closers, maglocks, and panic trim before specification." },
-                  { title: "Validation & Review", desc: "Compliance Pulse verifies life-safety, then exports BIM, PDF, and Excel packages in one click." }
-                ].map((card, idx) => (
-                  <div key={card.title} className="flex items-start gap-3">
-                    <div className="w-7 h-7 rounded-full bg-sky-400 text-slate-950 font-bold flex-shrink-0 flex items-center justify-center shadow-lg shadow-sky-500/40">
-                      {idx + 1}
-                    </div>
-                    <div className="bg-slate-950/60 border border-white/10 rounded-2xl p-4 text-white/80 flex-1 shadow">
-                      <div className="text-white font-semibold mb-1">{card.title}</div>
-                      <p className="text-sm text-white/65">{card.desc}</p>
-                    </div>
-                  </div>
+              <div className="text-xs uppercase tracking-[0.4em] text-white/50">Specification Intelligence</div>
+              <div className="space-y-4">
+                {INSIGHT_CARDS.map((card, index) => (
+                  <FadeCard
+                    key={card.title}
+                    delay={index * 90}
+                    ariaLabel={`${card.label} - ${card.title}`}
+                    className="min-h-[160px]"
+                  >
+                    <div className="text-xs uppercase tracking-[0.3em] text-white/60">{card.label}</div>
+                    <div className="text-white font-semibold text-2xl mt-2">{card.title}</div>
+                    <p className="text-sm text-white/70 leading-relaxed">{card.body}</p>
+                  </FadeCard>
                 ))}
               </div>
             </div>
-          </div>
+            <div className="space-y-4 flex-1 flex flex-col">
+              <div className="text-xs uppercase tracking-[0.4em] text-white/50">Workflow Snapshot</div>
+              <WorkflowStepper steps={WORKFLOW_STEPS_CONTENT} />
+            </div>
+            <div className="space-y-4">
+              <div className="text-xs uppercase tracking-[0.4em] text-white/50">Why InstaSpec?</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {WHY_INSTASPEC_CARDS.map((card, index) => {
+                  const Icon = card.icon || Info;
+                  const responsiveClasses =
+                    index === 2
+                      ? "sm:col-span-2 sm:max-w-xs sm:mx-auto lg:col-span-1 lg:max-w-none lg:mx-0"
+                      : "";
+                  return (
+                    <FadeCard
+                      key={card.title}
+                      delay={(index + WORKFLOW_STEPS_CONTENT.length) * 90}
+                      ariaLabel={card.title}
+                      paddingClass="px-4 py-4"
+                      className={`min-h-[140px] flex flex-col items-start justify-start gap-3 transition-transform duration-300 overflow-visible ${responsiveClasses}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-2xl bg-white/10 text-sky-200 flex-shrink-0">
+                          <Icon className="w-5 h-5" aria-hidden="true" />
+                        </div>
+                      </div>
+                      <div className="space-y-1 w-full">
+                        <div className="text-lg md:text-base font-semibold leading-tight text-white whitespace-normal break-normal hyphens-none">
+                          {card.title}
+                        </div>
+                        <p className="text-sm md:text-xs text-white/80 leading-snug whitespace-normal break-words">
+                          {card.body}
+                        </p>
+                      </div>
+                    </FadeCard>
+                  );
+                })}
+              </div>
+            </div>
+          </aside>
+
+          <section className="order-3 lg:col-start-1 lg:row-start-2 space-y-6">
+            <div>
+              <div className="text-xs uppercase tracking-[0.4em] text-white/50">Highlights</div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+              {HERO_STATS.slice(0, 6).map((stat, index) => {
+                const Icon = stat.icon || Layers;
+                return (
+                  <FadeCard
+                    key={stat.id}
+                    delay={(index + WORKFLOW_STEPS_CONTENT.length) * 70}
+                    className="flex flex-col gap-4 min-h-[190px]"
+                    ariaLabel={`${stat.value} ${stat.metric}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-2xl bg-white/10 text-sky-200">
+                        <Icon className="w-5 h-5" aria-hidden="true" />
+                      </div>
+                      <div className="flex flex-wrap items-baseline gap-2">
+                        <CountUpNumber value={Number(stat.value)} className="text-3xl font-black leading-none text-white" />
+                        <span className="text-sm font-semibold uppercase tracking-wide text-white/70">{stat.metric}</span>
+                      </div>
+                    </div>
+                    <p className="text-sm text-white/70 leading-relaxed break-normal">{stat.subtext}</p>
+                    <div className="mt-auto h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+                      <div className="h-full w-full bg-gradient-to-r from-sky-400 to-indigo-500" />
+                    </div>
+                  </FadeCard>
+                );
+              })}
+            </div>
+            {(() => {
+              const dashboardStat = HERO_STATS[6];
+              const DashboardIcon = dashboardStat.icon || LayoutGrid;
+              return (
+                <FadeCard
+                  delay={(HERO_STATS.length + WORKFLOW_STEPS_CONTENT.length) * 70}
+                  ariaLabel="1 Project Dashboard -- All projects in one clean, central view"
+                  className="w-full flex flex-col gap-4 min-h-[170px]"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-2xl bg-white/10 text-sky-200">
+                      <DashboardIcon className="w-5 h-5" aria-hidden="true" />
+                    </div>
+                    <div className="flex flex-wrap items-baseline gap-2">
+                      <CountUpNumber value={Number(dashboardStat.value)} className="text-3xl font-black leading-none text-white" />
+                      <span className="text-sm font-semibold uppercase tracking-wide text-white/70">{dashboardStat.metric}</span>
+                    </div>
+                  </div>
+                  <p className="text-sm text-white/70 leading-relaxed">{dashboardStat.subtext}</p>
+                  <div className="mt-auto h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+                    <div className="h-full w-full bg-gradient-to-r from-sky-400 to-indigo-500" />
+                  </div>
+                </FadeCard>
+              );
+            })()}
+          </section>
         </div>
       </div>
     </main>
@@ -1868,7 +2225,6 @@ const App = () => {
   // Hardware Logic
   const generateHardwareSets = () => {
     const proj = getProj();
-    const defaultFinish = getDefaultFinishForStandard(proj.standard);
     const groups = {};
 
     proj.doors.forEach(d => {
@@ -1878,6 +2234,7 @@ const App = () => {
     });
 
     const newSets = Object.entries(groups).map(([key, doors], idx) => {
+      const setProfile = buildSetProfile(doors);
       const [use, fireStr, config, material, stcStr, intentKey] = key.split('|');
       const fire = parseInt(fireStr);
       const stc = parseInt(stcStr);
@@ -1888,7 +2245,10 @@ const App = () => {
       const setID = `HW-${String(idx + 1).padStart(2, '0')}`;
       const isDouble = config === 'Double';
       let items = [];
-      const addItem = (cat, ref, type, style, spec, qty) => items.push({ category: cat, ref, type, style, spec, qty, finish: defaultFinish });
+      const addItem = (cat, ref, type, style, spec, qty) => {
+        const finish = getDefaultFinishForCategory(cat, proj.standard);
+        items.push({ category: cat, ref, type, style, spec, qty, finish });
+      };
 
       let hingeQty = 3;
       if (rep.height > 2300) hingeQty = 4;
@@ -1903,7 +2263,10 @@ const App = () => {
           const patchQty = isDouble ? "2" : "1";
           addItem("Hinges", "P01", "Patch Fitting", "Top Patch", "Top/Bottom patch kit", patchQty);
           addItem("Locks", "L01", "Patch Lock", "Corner Patch Lock", activeLeafSpec("Euro Cylinder Type"), "1");
-          addItem("Handles", "H01", "Pull Handle", "D-Pull", activeLeafSpec("600mm ctc"), "1 Pr");
+          const glassHandleType = setProfile.requiresPanic ? "Panic Push Pull Handle" : "Pull Handle";
+          const glassHandleStyle = setProfile.requiresPanic ? "L-Shaped" : "D-Pull";
+          const glassHandleSpec = setProfile.requiresPanic ? activeLeafSpec("L-shaped panic pull for tempered glass") : activeLeafSpec("600mm ctc");
+          addItem("Handles", "H01", glassHandleType, glassHandleStyle, glassHandleSpec, "1 Pr");
           addItem("Closers", "D01", "Floor Spring", "Double Action", activeLeafSpec("EN 1-4"), "1");
           if (isDouble) addItem("Closers", "D02", "Floor Spring", "Double Action", inactiveLeafSpec("EN 1-4"), "1");
       } else {
@@ -2021,8 +2384,6 @@ const App = () => {
     const proj = getProj();
     if (!proj) return;
     
-    const defaultFinish = getDefaultFinishForStandard(proj.standard);
-    
     // Find styles
     const catData = PRODUCT_CATALOG[category];
     const typeData = catData?.types.find(t => t.name === type);
@@ -2041,7 +2402,7 @@ const App = () => {
       if (p.id === currentId) {
         const newSets = p.sets.map(s => {
           if (s.id === addItemModal.setId) {
-            const newItem = { category, ref, type, style: defaultStyle, spec: "", qty: "1", finish: defaultFinish };
+            const newItem = { category, ref, type, style: defaultStyle, spec: "", qty: "1", finish: getDefaultFinishForCategory(category, proj.standard) };
             const doorsInSet = p.doors.filter(d => s.doors.includes(d.id));
             const context = computeSetContext(doorsInSet, [...s.items, newItem]);
             return {
@@ -2192,7 +2553,7 @@ const App = () => {
                                       <th className="text-left p-2">Item</th>
                                       <th className="text-left p-2">Description</th>
                                       <th className="text-left p-2">Finish</th>
-                                      <th className="text-left p-2">Acoustic Contribution</th>
+                                      <th className="text-left p-2">Acoustic</th>
                                       <th className="text-center p-2">Qty</th>
                                   </tr>
                               </thead>
@@ -2298,17 +2659,6 @@ const App = () => {
           </div>
         </div>
       )}
-      {view === 'wizard' && (
-        <div className="bg-slate-900/95 text-white px-4 md:px-8 py-4 flex flex-col md:flex-row gap-3 justify-center items-stretch shadow-inner">
-          {HERO_STATS.map((stat) => (
-            <div key={stat.label} className="flex-1 min-w-[160px] bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-center">
-              <div className="text-lg font-extrabold tracking-tight">{stat.value}</div>
-              <div className="text-[11px] uppercase tracking-[0.3em] text-white/60">{stat.label}</div>
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* Audit Log Viewer */}
       {showAuditLog && getProj() && (
           <div className="fixed inset-0 z-50 flex justify-end">
@@ -2365,22 +2715,6 @@ const App = () => {
               ))}
             </div>
             
-            {/* Feature 1: Coming Soon Placeholders */}
-            <div className="mt-8 pt-8 border-t border-gray-200">
-                <h3 className="font-bold text-gray-500 uppercase text-sm mb-4">Coming Soon Features</h3>
-                <div className="flex gap-4">
-                    <div className="flex-1 p-6 border border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center text-gray-400 bg-gray-50">
-                        <UploadCloud size={24} className="mb-2"/>
-                        <span className="font-bold">Upload Floor Plan</span>
-                        <span className="text-xs">AI Extraction</span>
-                    </div>
-                    <div className="flex-1 p-6 border border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center text-gray-400 bg-gray-50">
-                        <Wand2 size={24} className="mb-2"/>
-                        <span className="font-bold">Instant Schedule</span>
-                        <span className="text-xs">One-click Generation</span>
-                    </div>
-                </div>
-            </div>
           </div>
         )}
 
@@ -2633,6 +2967,10 @@ const App = () => {
                         const isGlassOnlySet = doorsInSet.length > 0 && doorsInSet.every(d => d.material === 'Glass');
                         const setMaterials = Array.from(new Set(doorsInSet.map(d => d.material)));
                         const setProfile = buildSetProfile(doorsInSet);
+                        const setHandles = s.items.filter((i) => i.category === "Handles");
+                        const hasGlassLeverHandle = setHandles.some((h) => (h.type || '').toLowerCase().includes('lever'));
+                        const requiresGlassLeverCenter = isGlassOnlySet && hasGlassLeverHandle;
+                        const requiresGlassPanicHandle = isGlassOnlySet && setProfile.requiresPanic;
                         const validationWarnings = getSetWarnings(s, setProfile);
                         return (
                       <div key={s.id} className="mb-12">
@@ -2657,9 +2995,9 @@ const App = () => {
                             <div className="flex-1">
                                 {/* Table Container */}
                                 <div className="border border-gray-200 rounded-lg overflow-hidden mb-4 overflow-x-auto">
-                                <div className="min-w-[700px]">
-                                    <div className="grid grid-cols-[30px_60px_60px_140px_140px_100px_1fr_120px_60px_40px] bg-gray-50 border-b border-gray-200 p-3 text-xs font-bold text-gray-500 uppercase">
-                                    <div></div><div>Ref</div><div>CSI</div><div>Product Type</div><div>Style</div><div>Finish</div><div>Specification</div><div>Acoustic Contribution</div><div>Qty</div><div></div>
+                                <div className="min-w-[900px]">
+                                    <div className="grid grid-cols-[40px_80px_80px_160px_160px_120px_1.2fr_140px_80px_50px] bg-gray-50 border-b border-gray-200 px-4 py-3 text-xs font-bold text-gray-500 uppercase gap-3">
+                                    <div></div><div>Ref</div><div>CSI</div><div>Product Type</div><div>Style</div><div>Finish</div><div>Specification</div><div>Acoustic</div><div>Qty</div><div></div>
                                     </div>
                                     {/* Feature 4: Categorized Hardware List */}
                                     {Object.keys(BHMA_CATEGORIES).map(catGroup => {
@@ -2676,7 +3014,7 @@ const App = () => {
                                                     const originalIndex = s.items.indexOf(item);
                                                     const cat = item.category || "Hinges";
                                                     const catData = PRODUCT_CATALOG[cat];
-                                                    const finishes = FINISHES[getProj().standard];
+                                                    const baseFinishes = FINISHES[getProj().standard];
                                                     let typeOptions = catData?.types || [];
                                                     const signalKey = `${s.id}-${originalIndex}`;
                                                     const warningActive = lockResetSignals[signalKey] && (Date.now() - lockResetSignals[signalKey] < 4000);
@@ -2722,7 +3060,7 @@ const App = () => {
                                                     }
                                                     if (cat === 'Locks') {
                                                         let allowed = getAllowedLockTypesForMaterials(setProfile.materials);
-                                                        if (setProfile.requiresPanic) allowed = ["Panic Bar"];
+                                                        if (setProfile.requiresPanic) allowed = isGlassOnlySet ? ["Patch Lock"] : ["Panic Bar"];
                                                         else if (setProfile.isEscapeRoute) allowed = allowed.filter(name => !name.toLowerCase().includes('deadbolt'));
                                                         typeOptions = typeOptions.filter(t => allowed.includes(t.name));
                                                         if (!typeOptions.some(t => t.name === effectiveType) && typeOptions.length > 0) {
@@ -2733,6 +3071,20 @@ const App = () => {
                                                             }, 0);
                                                             effectiveType = fallback;
                                                             compatibilityMessage = "Lock type reset: previous lock not compatible with selected material/use.";
+                                                        }
+                                                        if (requiresGlassLeverCenter) {
+                                                            const desiredType = 'Patch Lock';
+                                                            const desiredStyle = 'Center Patch Lock';
+                                                            if (effectiveType !== desiredType && typeOptions.some(t => t.name === desiredType)) {
+                                                                setTimeout(() => updateSetItem(s.id, originalIndex, 'type', desiredType), 0);
+                                                                effectiveType = desiredType;
+                                                            }
+                                                            if ((item.style || '') !== desiredStyle) {
+                                                                setTimeout(() => updateSetItem(s.id, originalIndex, 'style', desiredStyle), 0);
+                                                            }
+                                                            if (!compatibilityMessage) {
+                                                                compatibilityMessage = "Glass lever handles require a center patch lock with lever prep.";
+                                                            }
                                                         }
                                                     }
                                                     if (cat === 'Electrified') {
@@ -2749,6 +3101,16 @@ const App = () => {
                                                             compatibilityMessage = "Electrified option reset for compliance.";
                                                         }
                                                     }
+                                                    if (cat === 'Handles' && requiresGlassPanicHandle) {
+                                                        const desiredHandle = 'Panic Push Pull Handle';
+                                                        if (effectiveType !== desiredHandle && typeOptions.some(t => t.name === desiredHandle)) {
+                                                            setTimeout(() => updateSetItem(s.id, originalIndex, 'type', desiredHandle), 0);
+                                                            effectiveType = desiredHandle;
+                                                        }
+                                                        if (!compatibilityMessage) {
+                                                            compatibilityMessage = "Glass escape routes require L-shaped panic push/pull hardware.";
+                                                        }
+                                                    }
                                                     const stylesAll = (catData?.types.find(t => t.name === effectiveType) || { styles: [] }).styles || [];
                                                     let styles = stylesAll;
                                                     if (cat === 'Electrified' && setProfile.requiresFailSafe) {
@@ -2757,7 +3119,7 @@ const App = () => {
                                                     }
 
                                                     return (
-                                                        <div key={idx} className="grid grid-cols-[30px_60px_60px_140px_140px_100px_1fr_120px_60px_40px] border-b border-gray-100 p-2 items-center hover:bg-gray-50 relative">
+                                                        <div key={idx} className="grid grid-cols-[40px_80px_80px_160px_160px_120px_1.2fr_140px_80px_50px] border-b border-gray-100 px-4 py-2 items-center gap-3 hover:bg-gray-50 relative">
                                                             <div className="flex justify-center text-gray-400"><HardwareIcon category={cat} /></div>
                                                             {/* Owner View: Read Only */}
                                                             {userRole === 'Owner' ? (
@@ -2788,7 +3150,9 @@ const App = () => {
                                                                         {styles.map(st => <option key={st} value={st}>{st}</option>)}
                                                                     </select>
                                                                     <select value={item.finish} onChange={(e) => updateSetItem(s.id, originalIndex, 'finish', e.target.value)} className="w-full p-1 border rounded text-xs bg-white">
-                                                                        {finishes.map(f => <option key={f} value={f}>{f}</option>)}
+                                                                        {(getCategoryFinishList(cat, getProj().standard) || baseFinishes).map(f => (
+                                                                            <option key={f} value={f}>{f}</option>
+                                                                        ))}
                                                                     </select>
                                                                     <input type="text" value={item.spec} onChange={(e) => updateSetItem(s.id, originalIndex, 'spec', e.target.value)} className="w-full p-1 border rounded text-xs" />
                                                                     <div className="flex justify-start">
@@ -2933,6 +3297,66 @@ const App = () => {
           </div>
         )}
       </main>
+
+      {view === 'wizard' && (
+        <footer className="bg-slate-900/95 text-white px-4 md:px-8 py-8 shadow-inner">
+          <div className="max-w-7xl mx-auto flex flex-col gap-4">
+            <div className="flex flex-col md:flex-row gap-3 justify-center items-stretch">
+              {HERO_STATS.map((stat) => (
+                <div
+                  key={`wizard-stat-${stat.id}`}
+                  className="flex-1 min-w-[160px] bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-center"
+                >
+                  <div className="text-lg font-extrabold tracking-tight">{Number(stat.value).toLocaleString()}</div>
+                  <div className="text-[11px] uppercase tracking-[0.3em] text-white/60">{stat.metric}</div>
+                </div>
+              ))}
+            </div>
+            <div className="text-center text-xs text-white/60">
+              Engineered with care by{" "}
+              <a
+                href="https://techarix.com"
+                target="_blank"
+                rel="noreferrer"
+                className="text-white font-semibold underline underline-offset-2 decoration-white/40 hover:text-sky-300"
+              >
+                Techarix
+              </a>
+            </div>
+          </div>
+        </footer>
+      )}
+
+      {view === 'dashboard' && (
+        <footer className="bg-slate-900 text-white border-t border-gray-200 px-4 md:px-8 py-10">
+          <div className="max-w-7xl mx-auto w-full space-y-6">
+            <h3 className="font-bold text-white/70 uppercase text-sm mb-4 tracking-[0.3em]">Coming Soon Features</h3>
+            <div className="flex flex-col md:flex-row gap-4">
+              <div className="flex-1 p-6 border border-white/10 rounded-2xl flex flex-col items-center justify-center text-white/80 bg-white/5 shadow-inner">
+                <UploadCloud size={24} className="mb-2 text-sky-300" />
+                <span className="font-bold">Upload Floor Plan</span>
+                <span className="text-xs text-white/60">AI Extraction</span>
+              </div>
+              <div className="flex-1 p-6 border border-white/10 rounded-2xl flex flex-col items-center justify-center text-white/80 bg-white/5 shadow-inner">
+                <Wand2 size={24} className="mb-2 text-indigo-300" />
+                <span className="font-bold">Instant Schedule</span>
+                <span className="text-xs text-white/60">One-click Generation</span>
+              </div>
+            </div>
+            <div className="text-center text-xs text-white/60">
+              Engineered with care by{" "}
+              <a
+                href="https://techarix.com"
+                target="_blank"
+                rel="noreferrer"
+                className="text-white font-semibold underline underline-offset-2 decoration-white/40 hover:text-sky-300"
+              >
+                Techarix
+              </a>
+            </div>
+          </div>
+        </footer>
+      )}
 
       {/* Door Modal Overlay */}
       {isDoorModalOpen && (
