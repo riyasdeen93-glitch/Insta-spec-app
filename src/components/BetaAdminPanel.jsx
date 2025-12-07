@@ -8,23 +8,20 @@ import {
   Crown,
   Copy,
   RefreshCw,
-  RotateCcw,
   Plus,
   AlertCircle,
-  CheckCircle2
+  CheckCircle2,
+  RotateCcw
 } from "lucide-react";
 import {
-  getBetaConfig,
-  updateWhitelist,
-  updateAdmins,
-  updateBetaCode,
+  saveBetaUser,
+  deleteBetaUser,
+  listBetaUsers,
   generateNewBetaCode,
   getLoginStats,
-  upsertUserEntry,
-  removeUserEntry,
-  regenerateUserCode,
   loadFeedback,
-  getDownloadCount
+  getDownloadUsage,
+  MASTER_ADMIN_CODE
 } from "../auth/betaAccess";
 
 const formatRelativeTime = (timestamp) => {
@@ -39,29 +36,30 @@ const formatRelativeTime = (timestamp) => {
   return `${days}d ago`;
 };
 
+const DEFAULT_DOWNLOAD_LIMIT = 10;
+
 const BetaAdminPanel = ({ isOpen, onClose }) => {
-  const [whitelist, setWhitelist] = useState([]);
-  const [admins, setAdmins] = useState([]);
-  const [defaultTesterCode, setDefaultTesterCode] = useState("");
-  const [masterCode, setMasterCode] = useState("");
-  const [userEntries, setUserEntries] = useState({});
-  const [loginStats, setLoginStats] = useState({ totalLogins: 0, recentLogins: [] });
+  const [betaUsers, setBetaUsers] = useState([]);
+  const [loginStats, setLoginStatsState] = useState({ totalLogins: 0, recentLogins: [] });
+  const [feedbackList, setFeedbackList] = useState([]);
+  const [activeFeedback, setActiveFeedback] = useState(null);
   const [emailInput, setEmailInput] = useState("");
   const [makeAdmin, setMakeAdmin] = useState(false);
   const [status, setStatus] = useState(null);
   const [activeTab, setActiveTab] = useState("access");
-  const [feedbackList, setFeedbackList] = useState([]);
-  const [activeFeedback, setActiveFeedback] = useState(null);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [usageMap, setUsageMap] = useState({});
   const statusTimeout = useRef(null);
 
-  const stats = useMemo(
-    () => ({
-      totalUsers: whitelist.length,
-      totalAdmins: admins.length,
+  const stats = useMemo(() => {
+    const totalUsers = betaUsers.length;
+    const totalAdmins = betaUsers.filter((user) => user.isAdmin).length;
+    return {
+      totalUsers,
+      totalAdmins,
       totalLogins: loginStats.totalLogins
-    }),
-    [whitelist.length, admins.length, loginStats.totalLogins]
-  );
+    };
+  }, [betaUsers, loginStats.totalLogins]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -69,29 +67,15 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
     setEmailInput("");
     setMakeAdmin(false);
     setActiveTab("access");
-    refreshData();
+    refreshUsers();
     refreshFeedback();
-  }, [isOpen]);
-
-  useEffect(() => {
     return () => {
-      if (statusTimeout.current) clearTimeout(statusTimeout.current);
+      if (statusTimeout.current) {
+        clearTimeout(statusTimeout.current);
+      }
     };
-  }, []);
-
-  const refreshData = () => {
-    const config = getBetaConfig();
-    setWhitelist(config.whitelist);
-    setAdmins(config.admins);
-    setDefaultTesterCode(config.defaultTesterCode || config.betaCode || "");
-    setMasterCode(config.masterAdminCode || "");
-    setUserEntries(config.userEntries || {});
-    setLoginStats(getLoginStats());
-  };
-
-  const refreshFeedback = () => {
-    setFeedbackList(loadFeedback());
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   const showStatus = (message, tone = "success") => {
     const key = Date.now();
@@ -102,106 +86,144 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
     }, 3500);
   };
 
-  const isValidEmail = (value) => /\S+@\S+\.\S+/.test(value);
+  const refreshUsageForUsers = async (users) => {
+    try {
+      const entries = await Promise.all(
+        users.map(async (user) => {
+          try {
+            const usage = await getDownloadUsage(user.email);
+            return [user.email, usage];
+          } catch (err) {
+            console.error("Failed to load usage for", user.email, err);
+            return [user.email, { count: 0, limit: DEFAULT_DOWNLOAD_LIMIT }];
+          }
+        })
+      );
+      setUsageMap(Object.fromEntries(entries));
+    } catch (err) {
+      console.error("Failed to load usage map", err);
+    }
+  };
 
-  const handleAddUser = (e) => {
+  const refreshUsers = async () => {
+    setLoadingUsers(true);
+    try {
+      const users = await listBetaUsers();
+      users.sort((a, b) => a.email.localeCompare(b.email));
+      setBetaUsers(users);
+      setLoginStatsState(getLoginStats());
+      refreshUsageForUsers(users);
+    } catch (err) {
+      console.error("Failed to load beta users", err);
+      showStatus("Failed to load beta users.", "error");
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  const refreshFeedback = () => {
+    setFeedbackList(loadFeedback());
+  };
+
+  const isValidEmail = (value) => /\S+@\S+\.\S+/.test(value || "");
+
+  const upsertLocalUser = (updatedUser) => {
+    setBetaUsers((prev) => {
+      const others = prev.filter((user) => user.email !== updatedUser.email);
+      return [...others, updatedUser].sort((a, b) => a.email.localeCompare(b.email));
+    });
+  };
+
+  const handleAddUser = async (e) => {
     e.preventDefault();
     const normalized = emailInput.trim().toLowerCase();
-    const willBeAdmin = makeAdmin;
     if (!isValidEmail(normalized)) {
       showStatus("Enter a valid email before adding.", "error");
       return;
     }
-    if (whitelist.includes(normalized)) {
-      showStatus("This email is already whitelisted.", "error");
+    const alreadyExists = betaUsers.some((user) => user.email === normalized);
+    if (alreadyExists) {
+      showStatus("This email already exists in Firestore.", "error");
       return;
     }
-    const updatedWhitelist = updateWhitelist([...whitelist, normalized]);
-    setWhitelist(updatedWhitelist);
-    const entry = upsertUserEntry(normalized, { isAdmin: willBeAdmin });
-    setUserEntries((prev) => ({ ...prev, [normalized]: entry || prev[normalized] }));
-    if (willBeAdmin) {
-      const updatedAdmins = updateAdmins([...admins, normalized]);
-      setAdmins(updatedAdmins);
-    }
-    setEmailInput("");
-    setMakeAdmin(false);
-    showStatus(`Added ${normalized}${willBeAdmin ? " as admin" : ""}.`);
-    refreshData();
-  };
-
-  const handleRemoveUser = (email) => {
-    const updatedWhitelist = updateWhitelist(whitelist.filter((item) => item !== email));
-    setWhitelist(updatedWhitelist);
-    if (admins.includes(email)) {
-      const updatedAdmins = updateAdmins(admins.filter((item) => item !== email));
-      setAdmins(updatedAdmins);
-    }
-    removeUserEntry(email);
-    setUserEntries((prev) => {
-      const next = { ...prev };
-      delete next[email];
-      return next;
-    });
-    showStatus(`Removed ${email} from the beta list.`);
-    refreshData();
-  };
-
-  const handleToggleAdmin = (email) => {
-    let updatedAdmins;
-    if (admins.includes(email)) {
-      updatedAdmins = updateAdmins(admins.filter((item) => item !== email));
-      showStatus(`Removed admin permissions for ${email}.`);
-    } else {
-      updatedAdmins = updateAdmins([...admins, email]);
-      showStatus(`Promoted ${email} to admin.`);
-    }
-    setAdmins(updatedAdmins);
-    const entry = upsertUserEntry(email, { isAdmin: updatedAdmins.includes(email) });
-    setUserEntries((prev) => ({ ...prev, [email]: entry || prev[email] }));
-    refreshData();
-  };
-
-  const handleGenerateDefaultCode = async () => {
-    const generated = generateNewBetaCode();
-    const savedCode = updateBetaCode(generated);
-    setDefaultTesterCode(savedCode);
     try {
-      await navigator.clipboard?.writeText(savedCode);
-      showStatus("New global tester code generated & copied.");
-    } catch {
-      showStatus("New global tester code ready. Copy it manually.", "error");
-    }
-  };
-
-  const handleCopyDefaultCode = async () => {
-    if (!defaultTesterCode) return;
-    try {
-      await navigator.clipboard?.writeText(defaultTesterCode);
-      showStatus("Global tester code copied to clipboard.");
-    } catch {
-      showStatus("Unable to copy. Please copy manually.", "error");
-    }
-  };
-
-  const handleCopyMasterCode = async () => {
-    if (!masterCode) return;
-    try {
-      await navigator.clipboard?.writeText(masterCode);
-      showStatus("Master admin code copied.");
-    } catch {
-      showStatus("Unable to copy the master code. Copy it manually.", "error");
-    }
-  };
-
-  const handleRegenerateUserCode = (email) => {
-    const entry = regenerateUserCode(email);
-    if (entry?.code) {
-      setUserEntries((prev) => ({
+      const nextCode = generateNewBetaCode();
+      const saved = await saveBetaUser({
+        email: normalized,
+        code: nextCode,
+        plan: makeAdmin ? "beta_admin" : "beta_tester",
+        isAdmin: makeAdmin
+      });
+      upsertLocalUser(saved);
+      setUsageMap((prev) => ({
         ...prev,
-        [email]: { ...(prev[email] || {}), ...entry }
+        [saved.email]: { count: 0, limit: DEFAULT_DOWNLOAD_LIMIT }
       }));
-      showStatus(`New code generated for ${email}.`);
+      setEmailInput("");
+      setMakeAdmin(false);
+      showStatus(`Added ${normalized}${makeAdmin ? " as admin" : ""}.`);
+    } catch (err) {
+      console.error("Failed to add beta user", err);
+      showStatus("Unable to add user. Check console for details.", "error");
+    }
+  };
+
+  const handleToggleAdmin = async (user) => {
+    try {
+      const updated = await saveBetaUser({
+        email: user.email,
+        code: user.code,
+        plan: user.isAdmin ? "beta_tester" : "beta_admin",
+        isAdmin: !user.isAdmin,
+        expiresAt: user.expiresAt
+      });
+      upsertLocalUser(updated);
+      showStatus(
+        `${updated.email} is now ${updated.isAdmin ? "an admin" : "a beta tester"}.`
+      );
+    } catch (err) {
+      console.error("Failed to toggle admin", err);
+      showStatus("Unable to update admin state.", "error");
+    }
+  };
+
+  const handleRegenerateCode = async (user) => {
+    try {
+      const newCode = generateNewBetaCode();
+      const updated = await saveBetaUser({
+        email: user.email,
+        code: newCode,
+        plan: user.plan,
+        isAdmin: user.isAdmin,
+        expiresAt: user.expiresAt
+      });
+      upsertLocalUser(updated);
+      try {
+        await navigator.clipboard?.writeText(newCode);
+        showStatus("New code generated & copied.");
+      } catch {
+        showStatus("New code generated. Copy it manually.", "error");
+      }
+    } catch (err) {
+      console.error("Failed to regenerate code", err);
+      showStatus("Unable to regenerate code.", "error");
+    }
+  };
+
+  const handleRemoveUser = async (user) => {
+    if (!window.confirm(`Remove ${user.email} from the beta list?`)) return;
+    try {
+      await deleteBetaUser(user.email);
+      setBetaUsers((prev) => prev.filter((entry) => entry.email !== user.email));
+      setUsageMap((prev) => {
+        const next = { ...prev };
+        delete next[user.email];
+        return next;
+      });
+      showStatus(`${user.email} removed.`);
+    } catch (err) {
+      console.error("Failed to delete user", err);
+      showStatus("Unable to delete user.", "error");
     }
   };
 
@@ -227,7 +249,7 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Beta Access Admin Console</h2>
             <p className="text-xs text-gray-500">
-              Manage whitelisted users, admin privileges, individual codes, and login activity.
+              Manage Firestore-stored beta users, admin privileges, personalized codes, and login activity.
             </p>
           </div>
         </div>
@@ -262,216 +284,214 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
         </div>
 
         {activeTab === "access" && (
-        <>
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
-          <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
-            <p className="text-xs uppercase text-gray-500 font-semibold">Whitelisted Users</p>
-            <p className="text-2xl font-bold text-gray-900 mt-1">{stats.totalUsers}</p>
-          </div>
-          <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
-            <p className="text-xs uppercase text-gray-500 font-semibold">Admins</p>
-            <p className="text-2xl font-bold text-indigo-600 mt-1">{stats.totalAdmins}</p>
-          </div>
-          <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
-            <p className="text-xs uppercase text-gray-500 font-semibold">Recorded Logins</p>
-            <p className="text-2xl font-bold text-gray-900 mt-1">{stats.totalLogins}</p>
-          </div>
-        </section>
-
-        <section className="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="border border-gray-200 rounded-xl p-4 bg-gray-50 flex flex-col gap-2">
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <h3 className="text-sm font-semibold text-gray-800">Admin master code</h3>
-                <p className="text-xs text-gray-500">Read-only. Works only for admin emails.</p>
+          <>
+            <section className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
+              <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
+                <p className="text-xs uppercase text-gray-500 font-semibold">Beta Users</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">{stats.totalUsers}</p>
               </div>
-              <button
-                type="button"
-                onClick={handleCopyMasterCode}
-                className="px-3 py-1.5 text-xs border rounded-lg text-gray-700 hover:bg-gray-100 flex items-center gap-1"
-              >
-                <Copy size={12} /> Copy
-              </button>
-            </div>
-            <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 font-mono text-xs tracking-[0.2em] text-gray-900">
-              {masterCode || "NOT SET"}
-            </div>
-          </div>
-          <div className="border border-gray-200 rounded-xl p-4 bg-gray-50 flex flex-col gap-2">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <div>
-                <h3 className="text-sm font-semibold text-gray-800">Global tester fallback code</h3>
-                <p className="text-xs text-gray-500">Use only if a tester lacks a personal code.</p>
+              <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
+                <p className="text-xs uppercase text-gray-500 font-semibold">Admins</p>
+                <p className="text-2xl font-bold text-indigo-600 mt-1">{stats.totalAdmins}</p>
               </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={handleCopyDefaultCode}
-                  className="px-3 py-1.5 text-xs border rounded-lg text-gray-700 hover:bg-gray-100 flex items-center gap-1"
-                >
-                  <Copy size={12} /> Copy
-                </button>
-                <button
-                  onClick={handleGenerateDefaultCode}
-                  className="px-3 py-1.5 text-xs rounded-lg bg-indigo-600 text-white flex items-center gap-1 hover:bg-indigo-500"
-                >
-                  <RefreshCw size={12} /> Generate new global tester code
-                </button>
+              <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
+                <p className="text-xs uppercase text-gray-500 font-semibold">Recorded Logins</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">{stats.totalLogins}</p>
               </div>
-            </div>
-            <div className="rounded-lg border border-gray-200 bg-gray-900 text-white px-3 py-2 font-mono text-xs tracking-[0.2em] text-center">
-              {defaultTesterCode || "NO CODE SET"}
-            </div>
-          </div>
-        </section>
+            </section>
 
-        <section className="mb-6">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-gray-800">Manage Beta Users</h3>
-            <span className="text-xs text-gray-500">Emails are auto-lowercased and stored locally.</span>
-          </div>
-
-          <form
-            onSubmit={handleAddUser}
-            className="flex flex-col md:flex-row gap-3 items-start md:items-end mb-4 bg-gray-50 border border-gray-200 rounded-xl p-3"
-          >
-            <div className="w-full">
-              <label className="text-xs font-semibold text-gray-500 uppercase">Email</label>
-              <input
-                type="email"
-                value={emailInput}
-                onChange={(e) => setEmailInput(e.target.value)}
-                className="w-full mt-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-500 bg-white"
-                placeholder="beta-user@example.com"
-                required
-              />
-            </div>
-            <label className="flex items-center gap-2 text-xs font-semibold text-gray-600">
-              <input
-                type="checkbox"
-                checked={makeAdmin}
-                onChange={(e) => setMakeAdmin(e.target.checked)}
-                className="rounded border-gray-300"
-              />
-              Make admin too
-            </label>
-            <button
-              type="submit"
-              className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 text-white text-sm px-4 py-2 hover:bg-indigo-500"
-            >
-              <Plus size={14} /> Add beta user
-            </button>
-          </form>
-
-          <div className="border border-gray-200 rounded-xl divide-y divide-gray-100">
-            {whitelist.length === 0 ? (
-              <div className="p-4 text-sm text-gray-500 flex items-center gap-2">
-                <AlertCircle size={16} /> No beta users yet.
-              </div>
-            ) : (
-              whitelist.map((email) => {
-                const isAdmin = admins.includes(email);
-                const entry = userEntries[email];
-                const code = entry?.code || "Not generated yet";
-                return (
-                  <div
-                    key={email}
-                    className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="h-8 w-8 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                        <Mail size={16} />
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-gray-900 break-all">{email}</p>
-                        {isAdmin && (
-                          <span className="inline-flex items-center gap-1 text-xs text-indigo-600 font-semibold">
-                            <Crown size={12} /> Admin
-                          </span>
-                        )}
-                        <div className="text-xs text-gray-600 font-mono mt-1">
-                          Code: <span className="text-gray-900">{code}</span>
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          Downloads: {isAdmin ? "Unlimited" : `${getDownloadCount(email)} / 10`}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <button
-                        onClick={() => handleRegenerateUserCode(email)}
-                        className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-100 flex items-center gap-1"
-                      >
-                        <RotateCcw size={12} /> Regenerate code
-                      </button>
-                      <button
-                        onClick={() => handleToggleAdmin(email)}
-                        className={`px-3 py-1.5 text-xs font-semibold rounded-lg border flex items-center gap-1 ${
-                          isAdmin
-                            ? "text-gray-600 border-gray-200 hover:bg-gray-100"
-                            : "text-indigo-600 border-indigo-200 hover:bg-indigo-50"
-                        }`}
-                      >
-                        <Crown size={12} /> {isAdmin ? "Remove admin" : "Promote to admin"}
-                      </button>
-                      <button
-                        onClick={() => handleRemoveUser(email)}
-                        className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-red-200 text-red-600 hover:bg-red-50 flex items-center gap-1"
-                      >
-                        <Trash2 size={12} /> Remove
-                      </button>
-                    </div>
+            <section className="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="border border-gray-200 rounded-xl p-4 bg-gray-50 flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-800">Admin master code</h3>
+                    <p className="text-xs text-gray-500">Read-only constant for admin emails.</p>
                   </div>
-                );
-              })
-            )}
-          </div>
-        </section>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard?.writeText(MASTER_ADMIN_CODE);
+                        showStatus("Master code copied.");
+                      } catch {
+                        showStatus("Unable to copy master code.", "error");
+                      }
+                    }}
+                    className="px-3 py-1.5 text-xs border rounded-lg text-gray-700 hover:bg-gray-100 flex items-center gap-1"
+                  >
+                    <Copy size={12} /> Copy
+                  </button>
+                </div>
+                <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 font-mono text-xs tracking-[0.2em] text-gray-900">
+                  {MASTER_ADMIN_CODE}
+                </div>
+              </div>
+              <div className="border border-gray-200 rounded-xl p-4 bg-gray-50 flex flex-col gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800">Default tester code</h3>
+                  <p className="text-xs text-gray-500">
+                    Legacy fallback from <code>VITE_BETA_ACCESS_CODE</code>. Share only if needed.
+                  </p>
+                </div>
+                <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 font-mono text-xs tracking-[0.2em] text-gray-900">
+                  {import.meta.env.VITE_BETA_ACCESS_CODE || "NOT SET"}
+                </div>
+              </div>
+            </section>
 
-        <section>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-gray-800">Recent Logins</h3>
-            <span className="text-xs text-gray-500">Last {loginStats.recentLogins.length} sessions</span>
-          </div>
-          <div className="border border-gray-200 rounded-xl overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500">
-                <tr>
-                  <th className="px-3 py-2">Email</th>
-                  <th className="px-3 py-2">Role</th>
-                  <th className="px-3 py-2">Time</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loginStats.recentLogins.length === 0 ? (
-                  <tr>
-                    <td colSpan="3" className="px-3 py-4 text-center text-xs text-gray-500">
-                      No logins tracked yet.
-                    </td>
-                  </tr>
+            <section className="mb-6">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-gray-800">Manage Beta Users</h3>
+                <span className="text-xs text-gray-500">Users load directly from Firestore.</span>
+              </div>
+
+              <form
+                onSubmit={handleAddUser}
+                className="flex flex-col md:flex-row gap-3 items-start md:items-end mb-4 bg-gray-50 border border-gray-200 rounded-xl p-3"
+              >
+                <div className="w-full">
+                  <label className="text-xs font-semibold text-gray-500 uppercase">Email</label>
+                  <input
+                    type="email"
+                    value={emailInput}
+                    onChange={(e) => setEmailInput(e.target.value)}
+                    className="w-full mt-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-500 bg-white"
+                    placeholder="beta-user@example.com"
+                    required
+                  />
+                </div>
+                <label className="flex items-center gap-2 text-xs font-semibold text-gray-600">
+                  <input
+                    type="checkbox"
+                    checked={makeAdmin}
+                    onChange={(e) => setMakeAdmin(e.target.checked)}
+                    className="rounded border-gray-300"
+                  />
+                  Make admin too
+                </label>
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 text-white text-sm px-4 py-2 hover:bg-indigo-500"
+                  disabled={loadingUsers}
+                >
+                  <Plus size={14} /> Add beta user
+                </button>
+              </form>
+
+              <div className="border border-gray-200 rounded-xl divide-y divide-gray-100">
+                {loadingUsers ? (
+                  <div className="p-4 text-sm text-gray-500 flex items-center gap-2">
+                    <RefreshCw size={16} className="animate-spin" /> Loading users
+                  </div>
+                ) : betaUsers.length === 0 ? (
+                  <div className="p-4 text-sm text-gray-500 flex items-center gap-2">
+                    <AlertCircle size={16} /> No beta users yet.
+                  </div>
                 ) : (
-                  loginStats.recentLogins.map((entry, idx) => (
-                    <tr key={`${entry.email}-${entry.timestamp}-${idx}`} className="border-t border-gray-100">
-                      <td className="px-3 py-2 font-medium text-gray-800 break-all">{entry.email}</td>
-                      <td className="px-3 py-2">
-                        <span
-                          className={`inline-flex items-center gap-1 text-xs font-semibold ${
-                            entry.isAdmin ? "text-indigo-600" : "text-gray-600"
+                  betaUsers.map((user) => (
+                    <div
+                      key={user.email}
+                      className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="h-8 w-8 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                          <Mail size={16} />
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-gray-900 break-all">{user.email}</p>
+                          {user.isAdmin && (
+                            <span className="inline-flex items-center gap-1 text-xs text-indigo-600 font-semibold">
+                              <Crown size={12} /> Admin
+                            </span>
+                          )}
+                          <div className="text-xs text-gray-600 font-mono mt-1">
+                            Code: <span className="text-gray-900">{user.code || ""}</span>
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            Expires: {user.expiresAt ? new Date(user.expiresAt).toLocaleString() : "No expiry"}
+                          </div>
+                        <div className="text-xs text-gray-500">
+                          Downloads:{" "}
+                          {user.isAdmin
+                            ? "Unlimited"
+                            : `${usageMap[user.email]?.count ?? 0} / ${usageMap[user.email]?.limit ?? DEFAULT_DOWNLOAD_LIMIT}`}
+                        </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          onClick={() => handleRegenerateCode(user)}
+                          className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-100 flex items-center gap-1"
+                        >
+                          <RotateCcw size={12} /> Regenerate code
+                        </button>
+                        <button
+                          onClick={() => handleToggleAdmin(user)}
+                          className={`px-3 py-1.5 text-xs font-semibold rounded-lg border flex items-center gap-1 ${
+                            user.isAdmin
+                              ? "text-gray-600 border-gray-200 hover:bg-gray-100"
+                              : "text-indigo-600 border-indigo-200 hover:bg-indigo-50"
                           }`}
                         >
-                          <ShieldCheck size={12} />
-                          {entry.isAdmin ? "Admin" : "Beta"}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-xs text-gray-500">{formatRelativeTime(entry.timestamp)}</td>
-                    </tr>
+                          <Crown size={12} /> {user.isAdmin ? "Remove admin" : "Promote to admin"}
+                        </button>
+                        <button
+                          onClick={() => handleRemoveUser(user)}
+                          className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-red-200 text-red-600 hover:bg-red-50 flex items-center gap-1"
+                        >
+                          <Trash2 size={12} /> Remove
+                        </button>
+                      </div>
+                    </div>
                   ))
                 )}
-              </tbody>
-            </table>
-          </div>
-        </section>
+              </div>
+            </section>
 
-        </>
+            <section>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-gray-800">Recent Logins</h3>
+                <span className="text-xs text-gray-500">Last {loginStats.recentLogins.length} sessions</span>
+              </div>
+              <div className="border border-gray-200 rounded-xl overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500">
+                    <tr>
+                      <th className="px-3 py-2">Email</th>
+                      <th className="px-3 py-2">Role</th>
+                      <th className="px-3 py-2">Time</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loginStats.recentLogins.length === 0 ? (
+                      <tr>
+                        <td colSpan="3" className="px-3 py-4 text-center text-xs text-gray-500">
+                          No logins tracked yet.
+                        </td>
+                      </tr>
+                    ) : (
+                      loginStats.recentLogins.map((entry, idx) => (
+                        <tr key={`${entry.email}-${entry.timestamp}-${idx}`} className="border-t border-gray-100">
+                          <td className="px-3 py-2 font-medium text-gray-800 break-all">{entry.email}</td>
+                          <td className="px-3 py-2">
+                            <span
+                              className={`inline-flex items-center gap-1 text-xs font-semibold ${
+                                entry.isAdmin ? "text-indigo-600" : "text-gray-600"
+                              }`}
+                            >
+                              <ShieldCheck size={12} />
+                              {entry.isAdmin ? "Admin" : "Beta"}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-xs text-gray-500">{formatRelativeTime(entry.timestamp)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </>
         )}
 
         {activeTab === "feedback" && (
@@ -515,11 +535,11 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
                         <td className="px-3 py-2">{entry.context}</td>
                         <td className="px-3 py-2">
                           <div className="text-xs text-gray-700 max-w-[220px] truncate">
-                            {entry.message || "—"}
+                            {entry.message || ""}
                           </div>
                         </td>
                         <td className="px-3 py-2 text-xs text-gray-500">
-                          {entry.imageDataUrl ? "Attached" : "—"}
+                          {entry.imageDataUrl ? "Attached" : ""}
                         </td>
                         <td className="px-3 py-2">
                           <button
@@ -539,8 +559,7 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
         )}
 
         <p className="mt-4 text-[11px] text-gray-500">
-          Need to reset everything? Call <code>resetBetaConfig()</code> from the browser console,
-          or clear the <code>instaspec:</code> keys from localStorage.
+          Beta user data lives in Firestore. Use the Firebase console to perform full resets or to audit history.
         </p>
       </div>
       {activeFeedback && (
@@ -573,7 +592,7 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
             <div>
               <div className="text-xs uppercase text-gray-500 font-semibold mb-1">Message</div>
               <div className="text-sm text-gray-800 whitespace-pre-wrap bg-gray-50 border border-gray-200 rounded-lg p-3">
-                {activeFeedback.message || "—"}
+                {activeFeedback.message || ""}
               </div>
             </div>
             {activeFeedback.imageDataUrl && (

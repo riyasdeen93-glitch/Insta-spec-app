@@ -1,7 +1,7 @@
 // src/components/BetaAuthModal.jsx
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../auth/AuthContext";
-import { validateBetaAccess, isAdminEmail } from "../auth/betaAccess";
+import { validateBetaAccess } from "../auth/betaAccess";
 
 const BetaAuthModal = ({ isOpen, onClose }) => {
   const { user, login } = useAuth();
@@ -59,7 +59,7 @@ const BetaAuthModal = ({ isOpen, onClose }) => {
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
 
@@ -72,18 +72,25 @@ const BetaAuthModal = ({ isOpen, onClose }) => {
     }
 
     setIsSubmitting(true);
-    const ok = validateBetaAccess(trimmedEmail, trimmedCode);
-
-    if (ok) {
-      const plan = isAdminEmail(trimmedEmail) ? "beta_admin" : "beta_tester";
-      login(trimmedEmail, plan);
+    try {
+      const userRecord = await validateBetaAccess(trimmedEmail, trimmedCode);
+      if (!userRecord) {
+        setError("Invalid email or beta access code. Please double-check both.");
+        return;
+      }
+      login({
+        email: userRecord.email,
+        plan: userRecord.plan || (userRecord.isAdmin ? "beta_admin" : "beta_tester"),
+        isAdmin: Boolean(userRecord.isAdmin),
+        expiresAt: userRecord.expiresAt
+      });
       setMode("success");
-      // remainingText will be updated via useEffect when user changes
-    } else {
-      setError("Invalid email or beta access code. Please double-check both.");
+    } catch (err) {
+      console.error("Beta login failed:", err);
+      setError("Something went wrong while checking your code. Please try again.");
+    } finally {
+      setIsSubmitting(false);
     }
-
-    setIsSubmitting(false);
   };
 
   const handleResend = () => {

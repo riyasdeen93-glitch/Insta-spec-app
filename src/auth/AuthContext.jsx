@@ -1,9 +1,7 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { isAdminEmail, recordSuccessfulLogin } from "./betaAccess";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { getBetaUser, recordSuccessfulLogin } from "./betaAccess";
 
 const STORAGE_KEY = "instaspec:user";
-// How long a beta login should last (in hours)
-const BETA_SESSION_HOURS = 1;
 
 const AuthContext = createContext({
   user: null,
@@ -12,21 +10,12 @@ const AuthContext = createContext({
 });
 
 export const AuthProvider = ({ children }) => {
-  const createUser = useCallback((email, plan) => {
-    if (plan === "beta_tester") {
-      const expiresAt = Date.now() + BETA_SESSION_HOURS * 60 * 60 * 1000;
-      return { email, plan, expiresAt };
-    }
-    return { email, plan, expiresAt: null };
-  }, []);
   const [user, setUser] = useState(() => {
     if (typeof window === "undefined") return null;
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
-
-      // If there's an expiry and it's in the past, treat as logged out
       if (parsed.expiresAt && parsed.expiresAt <= Date.now()) {
         window.localStorage.removeItem(STORAGE_KEY);
         return null;
@@ -36,7 +25,56 @@ export const AuthProvider = ({ children }) => {
       return null;
     }
   });
+  const logoutTimerRef = useRef(null);
+  const toUserState = useCallback((record) => {
+    if (!record?.email) return null;
+    const normalizedEmail = record.email.trim().toLowerCase();
+    if (!normalizedEmail) return null;
+    const plan = record.plan || (record.isAdmin ? "beta_admin" : "beta_tester");
+    return {
+      email: normalizedEmail,
+      plan,
+      isAdmin:
+        typeof record.isAdmin === "boolean" ? record.isAdmin : plan === "beta_admin",
+      expiresAt: typeof record.expiresAt === "number" ? record.expiresAt : null
+    };
+  }, []);
 
+  const refreshFromServer = useCallback(
+    async (email) => {
+      const normalized = (email || "").trim().toLowerCase();
+      if (!normalized) return null;
+      try {
+        const latest = await getBetaUser(normalized);
+        if (!latest || (latest.expiresAt && latest.expiresAt <= Date.now())) {
+          setUser(null);
+          return null;
+        }
+        const mapped = toUserState({ ...latest, email: normalized });
+        if (!mapped) {
+          setUser(null);
+          return null;
+        }
+        setUser((prev) => {
+          if (
+            prev &&
+            prev.email === mapped.email &&
+            prev.plan === mapped.plan &&
+            prev.isAdmin === mapped.isAdmin &&
+            prev.expiresAt === mapped.expiresAt
+          ) {
+            return prev;
+          }
+          return mapped;
+        });
+        return mapped;
+      } catch (err) {
+        console.warn("Failed to verify beta session", err);
+        return null;
+      }
+    },
+    [toUserState]
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -48,27 +86,43 @@ export const AuthProvider = ({ children }) => {
   }, [user]);
 
   useEffect(() => {
-  if (!user || !user.expiresAt) return;
+    if (logoutTimerRef.current) {
+      clearTimeout(logoutTimerRef.current);
+      logoutTimerRef.current = null;
+    }
+    if (!user || !user.expiresAt) return;
 
-  const msLeft = user.expiresAt - Date.now();
-  if (msLeft <= 0) {
-    setUser(null);
-    return;
-  }
+    const msLeft = user.expiresAt - Date.now();
+    if (msLeft <= 0) {
+      setUser(null);
+      return;
+    }
+    logoutTimerRef.current = setTimeout(() => {
+      setUser(null);
+    }, msLeft);
 
-  const timeoutId = setTimeout(() => {
-    setUser(null);
-  }, msLeft);
+    return () => {
+      if (logoutTimerRef.current) {
+        clearTimeout(logoutTimerRef.current);
+        logoutTimerRef.current = null;
+      }
+    };
+  }, [user]);
 
-  return () => clearTimeout(timeoutId);
-}, [user]);
+  useEffect(() => {
+    if (!user?.email) return undefined;
+    refreshFromServer(user.email);
+  }, [user?.email, refreshFromServer]);
 
-  const login = useCallback((email, plan) => {
-    const normalizedEmail = (email || "").trim().toLowerCase();
-    const nextUser = createUser(normalizedEmail, plan);
-    setUser(nextUser);
-    recordSuccessfulLogin(normalizedEmail, isAdminEmail(normalizedEmail));
-  }, [createUser]);
+  const login = useCallback(
+    (userRecord) => {
+      const mapped = toUserState(userRecord);
+      if (!mapped) return;
+      setUser(mapped);
+      recordSuccessfulLogin(mapped.email, mapped.isAdmin);
+    },
+    [toUserState]
+  );
 
   const logout = useCallback(() => {
     setUser(null);

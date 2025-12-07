@@ -2,7 +2,9 @@ import { useAuth } from "./auth/AuthContext";
 import BetaAuthModal from "./components/BetaAuthModal";
 import BetaAdminPanel from "./components/BetaAdminPanel";
 import BetaFeedbackModal from "./components/BetaFeedbackModal";
-import { isAdminEmail, getDownloadCount, incrementDownload } from "./auth/betaAccess";
+import FeedbackModal from "./components/FeedbackModal";
+import { isAdminEmail, getDownloadUsage, incrementDownloadCount } from "./auth/betaAccess";
+import { loadProjectsForUser, saveProjectForUser, deleteProjectForUser } from "./auth/projectStore";
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   LayoutGrid, PlusCircle, FolderOpen, Trash2, 
@@ -12,7 +14,7 @@ import {
   Menu, ChevronDown, Search, Info, Flame, Accessibility, RotateCcw,
   Eye, Layers, UserCircle, History, Box, Download, Library, MoveHorizontal,
   Lock, Settings, MousePointer, Power, Printer, FileText, Volume2, Scale,
-  BookOpen, UploadCloud, Wand2, ShieldCheck, Wrench, RefreshCw
+  BookOpen, UploadCloud, Wand2, ShieldCheck, Wrench, RefreshCw, Zap
 } from 'lucide-react';
 
 // --- UTILS ---
@@ -167,6 +169,58 @@ const WHY_INSTASPEC_CARDS = [
 ];
 const REVIEW_NOTICE =
   "Notice: All auto-generated door hardware content must be reviewed and approved by a qualified subject-matter expert before it is shared or issued. Proceed only if you acknowledge this requirement.";
+
+const DEFAULT_INSTANT_INPUTS = {
+  Residential: {
+    floors: 4,
+    unitsPerFloor: 4,
+    unitType: "2BHK",
+    identicalFloors: true
+  },
+  "Education / School": {
+    floors: 3,
+    classroomsPerFloor: 6,
+    toiletsPerFloor: 2,
+    hasAdminLabs: true
+  },
+  "Commercial Office": {
+    floors: 6,
+    openLayout: true,
+    meetingRooms: 4,
+    hasServiceAreas: true
+  },
+  "Airport / Transport": {
+    floors: 2,
+    concourses: 1,
+    gatesPerConcourse: 6,
+    securityZones: 2,
+    hasInternationalZone: true
+  },
+  "Hospital / Healthcare": {
+    floors: 5,
+    patientRoomsPerFloor: 12,
+    operatingRooms: 4,
+    icuRoomsPerFloor: 2,
+    hasEmergencyDept: true
+  },
+  "Hospitality / Hotel": {
+    floors: 10,
+    roomsPerFloor: 18,
+    suitesPerFloor: 2,
+    hasBallroom: true,
+    hasServiceZones: true
+  }
+};
+
+const cloneInstantInputs = () => JSON.parse(JSON.stringify(DEFAULT_INSTANT_INPUTS));
+const getInstantInputsForProject = (project, facilityType) => {
+  const defaults = cloneInstantInputs();
+  const projectInputs = project?.instantInputs || {};
+  return {
+    ...defaults[facilityType],
+    ...(projectInputs[facilityType] || {})
+  };
+};
 
 // BHMA Categorization Helper
 const BHMA_CATEGORIES = {
@@ -349,6 +403,453 @@ const normalizeDoor = (door) => {
     weightAuto: door.weightAuto !== false,
     ada: door.ada === true
   };
+};
+
+const INSTANT_SCHEDULE_RULES = {
+  Residential: (inputs = {}) => {
+    const floors = Math.max(1, parseInt(inputs.floors, 10) || 1);
+    const unitsPerFloor = Math.max(1, parseInt(inputs.unitsPerFloor, 10) || 1);
+    const totalUnits = floors * unitsPerFloor;
+    const unitType = inputs.unitType || "2BHK";
+    const plan = {
+      "1BHK": { bedrooms: 1, bathrooms: 1 },
+      "2BHK": { bedrooms: 2, bathrooms: 2 },
+      "3BHK": { bedrooms: 3, bathrooms: 3 }
+    }[unitType] || { bedrooms: 2, bathrooms: 2 };
+    const doors = [];
+    doors.push({
+      roomName: "Unit Entry",
+      use: "Unit Entrance (Fire Rated)",
+      qty: totalUnits,
+      width: 950,
+      height: 2150,
+      material: "Timber",
+      fire: 60,
+      notes: "Auto-generated residential entrance"
+    });
+    doors.push({
+      roomName: "Bedroom",
+      use: "Bedroom / Internal",
+      qty: totalUnits * plan.bedrooms,
+      width: 900,
+      height: 2100
+    });
+    doors.push({
+      roomName: "Bathroom",
+      use: "Bathroom / Privacy",
+      qty: totalUnits * plan.bathrooms,
+      width: 800,
+      height: 2100,
+      material: "Timber",
+      notes: "Privacy lockset recommended"
+    });
+    doors.push({
+      roomName: "Service / Utility",
+      use: "Service / Utility",
+      qty: floors,
+      width: 900,
+      height: 2100,
+      material: "Metal",
+      fire: 30
+    });
+    return doors;
+  },
+  "Education / School": (inputs = {}) => {
+    const floors = Math.max(1, parseInt(inputs.floors, 10) || 1);
+    const classroomsPerFloor = Math.max(0, parseInt(inputs.classroomsPerFloor, 10) || 0);
+    const toiletsPerFloor = Math.max(0, parseInt(inputs.toiletsPerFloor, 10) || 0);
+    const hasAdminLabs = Boolean(inputs.hasAdminLabs);
+    const doors = [];
+    if (classroomsPerFloor > 0) {
+      doors.push({
+        roomName: "Classroom",
+        use: "Classroom",
+        qty: floors * classroomsPerFloor,
+        width: 950,
+        height: 2150,
+        material: "Timber"
+      });
+    }
+    if (toiletsPerFloor > 0) {
+      doors.push({
+        roomName: "Restroom",
+        use: "Restroom",
+        qty: floors * toiletsPerFloor,
+        width: 900,
+        height: 2100,
+        material: "Timber",
+        notes: "Privacy indicator set"
+      });
+    }
+    if (hasAdminLabs) {
+      doors.push({
+        roomName: "Admin / Lab",
+        use: "Admin / Lab",
+        qty: floors * 2,
+        width: 950,
+        height: 2150,
+        material: "Metal",
+        fire: 30
+      });
+    }
+    doors.push({
+      roomName: "Stair / Exit",
+      use: "Stairwell / Exit",
+      qty: Math.max(1, floors) * 2,
+      width: 1000,
+      height: 2150,
+      material: "Metal",
+      fire: 60
+    });
+    return doors;
+  },
+  "Commercial Office": (inputs = {}) => {
+    const floors = Math.max(1, parseInt(inputs.floors, 10) || 1);
+    const meetingRooms = Math.max(0, parseInt(inputs.meetingRooms, 10) || 0);
+    const openLayout = Boolean(inputs.openLayout);
+    const hasServiceAreas = Boolean(inputs.hasServiceAreas);
+    const doors = [];
+    doors.push({
+      roomName: "Main Lobby",
+      use: "Main Entrance",
+      qty: 2,
+      width: 1100,
+      height: 2400,
+      material: "Glass",
+      notes: "Paired glass entry"
+    });
+    doors.push({
+      roomName: "Open Office",
+      use: "Office / Passage",
+      qty: floors * (openLayout ? 2 : 4),
+      width: 950,
+      height: 2150
+    });
+    if (meetingRooms > 0) {
+      doors.push({
+        roomName: "Meeting Room",
+        use: "Meeting Room",
+        qty: floors * meetingRooms,
+        width: 1000,
+        height: 2150,
+        stc: 40,
+        notes: "Acoustic seals recommended"
+      });
+    }
+    doors.push({
+      roomName: "Restroom",
+      use: "Restroom",
+      qty: floors * 2,
+      width: 900,
+      height: 2100
+    });
+    if (hasServiceAreas) {
+      doors.push({
+        roomName: "Service / BOH",
+        use: "Service / Utility",
+        qty: floors,
+        width: 950,
+        height: 2150,
+        material: "Metal",
+        fire: 30
+      });
+    }
+    return doors;
+  },
+  "Hospital / Healthcare": (inputs = {}) => {
+    const floors = Math.max(1, parseInt(inputs.floors, 10) || 1);
+    const patientRooms = Math.max(0, parseInt(inputs.patientRoomsPerFloor, 10) || 0);
+    const icuRooms = Math.max(0, parseInt(inputs.icuRoomsPerFloor, 10) || 0);
+    const operatingRooms = Math.max(0, parseInt(inputs.operatingRooms, 10) || 0);
+    const hasEmergency = Boolean(inputs.hasEmergencyDept);
+    const doors = [];
+    if (patientRooms > 0) {
+      doors.push({
+        roomName: "Patient Room",
+        use: "Patient Room",
+        qty: floors * patientRooms,
+        width: 950,
+        height: 2150,
+        material: "Timber",
+        notes: "Auto-generated for patient rooms"
+      });
+    }
+    if (icuRooms > 0) {
+      doors.push({
+        roomName: "ICU / Isolation",
+        use: "Patient Room",
+        qty: floors * icuRooms,
+        width: 1000,
+        height: 2150,
+        material: "Metal",
+        notes: "Isolation-ready leaf with seals",
+        stc: 40
+      });
+    }
+    if (operatingRooms > 0) {
+      doors.push({
+        roomName: "Operating Theatre",
+        use: "Operating Theatre",
+        qty: Math.max(1, operatingRooms),
+        width: 1200,
+        height: 2400,
+        material: "Metal",
+        fire: 60,
+        hardwareIntent: "Electromechanical",
+        notes: "Pairs with automatic operator"
+      });
+    }
+    doors.push({
+      roomName: "Consult / Exam",
+      use: "Consultation / Exam",
+      qty: floors * 2,
+      width: 1000,
+      height: 2150
+    });
+    doors.push({
+      roomName: "Clean Utility",
+      use: "Clean / Dirty Utility",
+      qty: floors,
+      width: 950,
+      height: 2150,
+      material: "Metal",
+      fire: 30
+    });
+    doors.push({
+      roomName: "Restroom",
+      use: "Restroom",
+      qty: floors * 2,
+      width: 900,
+      height: 2100
+    });
+    doors.push({
+      roomName: "Stair / Exit",
+      use: "Stairwell / Exit",
+      qty: floors * 2,
+      width: 1000,
+      height: 2150,
+      material: "Metal",
+      fire: 90
+    });
+    if (hasEmergency) {
+      doors.push({
+        roomName: "Emergency Entry",
+        use: "Main Entrance",
+        qty: 2,
+        width: 1200,
+        height: 2400,
+        material: "Glass",
+        hardwareIntent: "Electromechanical",
+        notes: "Dedicated emergency access"
+      });
+    }
+    return doors;
+  },
+  "Airport / Transport": (inputs = {}) => {
+    const floors = Math.max(1, parseInt(inputs.floors, 10) || 1);
+    const concourses = Math.max(1, parseInt(inputs.concourses, 10) || 1);
+    const gatesPerConcourse = Math.max(1, parseInt(inputs.gatesPerConcourse, 10) || 1);
+    const securityZones = Math.max(1, parseInt(inputs.securityZones, 10) || 1);
+    const hasInternational = Boolean(inputs.hasInternationalZone);
+    const totalGates = concourses * gatesPerConcourse;
+    const doors = [];
+    doors.push({
+      roomName: "Terminal Entry",
+      use: "Terminal Entry",
+      qty: Math.max(2, concourses * 2),
+      width: 1200,
+      height: 2600,
+      material: "Glass",
+      notes: "Airside / landside entry pairs"
+    });
+    doors.push({
+      roomName: "Security Checkpoint",
+      use: "Security / Checkpoint",
+      qty: securityZones * concourses,
+      width: 1100,
+      height: 2400,
+      material: "Metal",
+      hardwareIntent: "Electromechanical",
+      notes: "Controlled access openings"
+    });
+    doors.push({
+      roomName: "Boarding Gate",
+      use: "Boarding Gate",
+      qty: totalGates,
+      width: 1100,
+      height: 2400,
+      material: "Glass"
+    });
+    doors.push({
+      roomName: "Restroom",
+      use: "Restroom",
+      qty: floors * 4,
+      width: 900,
+      height: 2100
+    });
+    doors.push({
+      roomName: "Staff / Service",
+      use: "Staff Only / Service",
+      qty: concourses * 2,
+      width: 1000,
+      height: 2150,
+      material: "Metal",
+      fire: 30
+    });
+    doors.push({
+      roomName: "Baggage / Logistics",
+      use: "Baggage / Logistics",
+      qty: concourses,
+      width: 1100,
+      height: 2400,
+      material: "Metal",
+      fire: 60
+    });
+    doors.push({
+      roomName: "Stair / Exit",
+      use: "Stairwell / Exit",
+      qty: floors * 2,
+      width: 1000,
+      height: 2150,
+      material: "Metal",
+      fire: 90
+    });
+    if (hasInternational) {
+      doors.push({
+        roomName: "International Zone",
+        use: "Corridor / Circulation",
+        qty: concourses,
+        width: 1100,
+        height: 2400,
+        hardwareIntent: "Electromechanical",
+        notes: "Immigration / customs separation"
+      });
+    }
+    return doors;
+  },
+  "Hospitality / Hotel": (inputs = {}) => {
+    const floors = Math.max(1, parseInt(inputs.floors, 10) || 1);
+    const roomsPerFloor = Math.max(0, parseInt(inputs.roomsPerFloor, 10) || 0);
+    const suitesPerFloor = Math.max(0, parseInt(inputs.suitesPerFloor, 10) || 0);
+    const hasBallroom = Boolean(inputs.hasBallroom);
+    const hasServiceZones = Boolean(inputs.hasServiceZones);
+    const doors = [];
+    if (roomsPerFloor > 0) {
+      doors.push({
+        roomName: "Guest Room Entry",
+        use: "Guest Room Entry",
+        qty: floors * roomsPerFloor,
+        width: 950,
+        height: 2150,
+        material: "Timber",
+        notes: "Smart-lock ready leaf"
+      });
+    }
+    if (suitesPerFloor > 0) {
+      doors.push({
+        roomName: "Suite Connector",
+        use: "Connecting Door",
+        qty: floors * suitesPerFloor,
+        width: 900,
+        height: 2150,
+        material: "Timber",
+        notes: "Privacy bolt + closer"
+      });
+    }
+    doors.push({
+      roomName: "Corridor",
+      use: "Corridor / Circulation",
+      qty: floors * 2,
+      width: 1000,
+      height: 2150
+    });
+    doors.push({
+      roomName: "Restroom Core",
+      use: "Restroom",
+      qty: floors * 2,
+      width: 900,
+      height: 2100
+    });
+    doors.push({
+      roomName: "Stair / Exit",
+      use: "Stairwell / Exit",
+      qty: floors * 2,
+      width: 1000,
+      height: 2150,
+      material: "Metal",
+      fire: 60
+    });
+    if (hasBallroom) {
+      doors.push({
+        roomName: "Ballroom",
+        use: "Ballroom / Assembly",
+        qty: 4,
+        width: 1200,
+        height: 2600,
+        config: "Double",
+        notes: "Paired entry with panic hardware"
+      });
+    }
+    if (hasServiceZones) {
+      doors.push({
+        roomName: "Back of House",
+        use: "Back of House",
+        qty: floors,
+        width: 1000,
+        height: 2150,
+        material: "Metal",
+        fire: 30
+      });
+    }
+    return doors;
+  }
+};
+
+const generateInstantDoorSchedule = (project, existingDoors = project?.doors || []) => {
+  if (!project) return [];
+  const handler = INSTANT_SCHEDULE_RULES[project.type];
+  if (!handler) return [];
+  const defaults = cloneInstantInputs();
+  const projectInputs = project.instantInputs || defaults;
+  const answers = projectInputs[project.type] || defaults[project.type] || {};
+  const specs = handler(answers, project).filter((spec) => spec && spec.qty > 0);
+  let tempDoors = [...existingDoors];
+  const newDoors = [];
+  specs.forEach((spec, idx) => {
+    const markBase = spec.markBase || `D-${String(tempDoors.length + idx + 1).padStart(3, "0")}`;
+    const mark = generateUniqueMark(tempDoors, markBase);
+    const qty = Math.max(1, spec.qty || 1);
+    const additionalLocations = Array.from({ length: qty - 1 }, (_, addIdx) => ({
+      zone: spec.zone || "Tower A",
+      level: spec.level || String(((idx + addIdx) % 10) + 1).padStart(2, "0"),
+      roomName: `${spec.roomName || spec.use || "Door"} #${addIdx + 2}`
+    }));
+    const baseDoor = {
+      id: generateId(),
+      mark,
+      zone: spec.zone || "Tower A",
+      level: spec.level || String((idx % 10) + 1).padStart(2, "0"),
+      roomName: spec.roomName || spec.use || `Generated Door ${idx + 1}`,
+      width: spec.width || 900,
+      height: spec.height || 2100,
+      thickness: spec.thickness || 45,
+      weight: spec.weight || 45,
+      fire: spec.fire || 0,
+      use: spec.use || spec.roomName || "",
+      material: spec.material || "Timber",
+      config: spec.config || "Single",
+      handing: spec.handing || "RH",
+      stc: spec.stc || 35,
+      ada: spec.ada || false,
+      notes: spec.notes || "",
+      hardwareIntent: spec.hardwareIntent || getRecommendedHardwareIntent(spec),
+      additionalLocations
+    };
+    const door = normalizeDoor(baseDoor);
+    newDoors.push(door);
+    tempDoors = [...tempDoors, door];
+  });
+  return newDoors;
 };
 
 const classifyDoor = (door) => {
@@ -814,7 +1315,12 @@ const normalizeProject = (project) => {
       items: normalizedItems
     };
   });
-  return { ...project, doors: normalizedDoors, sets: normalizedSets };
+  const defaults = cloneInstantInputs();
+  const mergedInstant = { ...defaults, ...(project.instantInputs || {}) };
+  Object.keys(defaults).forEach((typeKey) => {
+    mergedInstant[typeKey] = { ...defaults[typeKey], ...(mergedInstant[typeKey] || {}) };
+  });
+  return { ...project, doors: normalizedDoors, sets: normalizedSets, instantInputs: mergedInstant };
 };
 
 // --- CUSTOM UI COMPONENTS ---
@@ -1800,6 +2306,7 @@ const App = () => {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
+  const [isReportFeedbackOpen, setIsReportFeedbackOpen] = useState(false);
   const isAdmin = user ? isAdminEmail(user.email) : false;
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [remainingLabel, setRemainingLabel] = useState("");
@@ -1815,9 +2322,9 @@ const App = () => {
   const [printMode, setPrintMode] = useState(false);
   const [exportStatus, setExportStatus] = useState('');
   const [lockResetSignals, setLockResetSignals] = useState({});
-  const [downloadUsageTick, setDownloadUsageTick] = useState(0);
   const [downloadWarning, setDownloadWarning] = useState("");
   const DOWNLOAD_LIMIT = 10;
+  const [downloadUsage, setDownloadUsage] = useState({ count: 0, limit: DOWNLOAD_LIMIT });
   
   // Door Modal State (Hierarchical Location)
   const [doorForm, setDoorForm] = useState({
@@ -1839,6 +2346,8 @@ const App = () => {
   const [bulkModal, setBulkModal] = useState({ isOpen: false, templateId: "", markPrefix: "", locationsText: "" });
   const [showAuditLog, setShowAuditLog] = useState(false);
   const [saveStatus, setSaveStatus] = useState('Saved');
+  const [instantDoorModal, setInstantDoorModal] = useState({ isOpen: false, doors: [] });
+  const [activeLocationsDoorId, setActiveLocationsDoorId] = useState(null);
   const recommendedIntent = getRecommendedHardwareIntent(doorForm);
   const numericWidth = parseInt(doorForm.width, 10) || 0;
   const adaClearOpening = Math.max(0, numericWidth - ADA_CLEARANCE_DEDUCTION_MM);
@@ -1847,24 +2356,46 @@ const App = () => {
     ? `Door width ${numericWidth || 0}mm provides ${adaClearOpening}mm clear opening; ADA requires ${ADA_MIN_CLEAR_OPENING_MM}mm (32").`
     : '';
   const isBetaUser = Boolean(user && (user.plan === "beta_tester" || user.plan === "beta_admin"));
-  const downloadCount = useMemo(() => {
-    if (!user || user.plan === "beta_admin") return null;
-    return getDownloadCount(user.email);
-  }, [user, downloadUsageTick]);
+  const downloadCount =
+    !user || user.plan === "beta_admin" ? null : downloadUsage.count;
 
-  // Load Data on Mount
+  // Load projects when user changes (per-user storage)
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('specSmartDB');
-      if (saved) {
-        const data = JSON.parse(saved);
-        if (data.projects) setProjects(data.projects.map(normalizeProject));
-        if (data.library) setLibrary(data.library);
-      }
-    } catch (e) {
-      console.error("Failed to load projects", e);
+    if (!user?.email) {
+      setProjects([]);
+      setCurrentId(null);
+      return;
     }
-  }, []);
+    const load = async () => {
+      try {
+        const remoteProjects = await loadProjectsForUser(user.email);
+        setProjects(remoteProjects.map(normalizeProject));
+      } catch (err) {
+        console.error("Failed to load projects from Firestore", err);
+      }
+    };
+    load();
+  }, [user?.email]);
+
+  useEffect(() => {
+    let active = true;
+    const fetchUsage = async () => {
+      if (!user || user.plan === "beta_admin") {
+        if (active) setDownloadUsage({ count: 0, limit: DOWNLOAD_LIMIT });
+        return;
+      }
+      try {
+        const usage = await getDownloadUsage(user.email);
+        if (active) setDownloadUsage(usage);
+      } catch (err) {
+        console.error("Failed to load download usage", err);
+      }
+    };
+    fetchUsage();
+    return () => {
+      active = false;
+    };
+  }, [user?.email]);
 
     // Redirect to landing when auth is gone (logout / expiry)
     useEffect(() => {
@@ -1876,14 +2407,23 @@ const App = () => {
   }, [user, view]);
 
 
-  // Save Data on Change
+  // Save projects when they change (per user)
   useEffect(() => {
-    if (projects.length > 0 || view !== 'landing') {
-      setSaveStatus('Saving...');
-      localStorage.setItem('specSmartDB', JSON.stringify({ projects, library }));
-      setTimeout(() => setSaveStatus('Saved'), 800);
-    }
-  }, [projects, library]);
+    if (!user?.email) return;
+    setSaveStatus('Saving...');
+    const persist = async () => {
+      try {
+        for (const project of projects) {
+          await saveProjectForUser(user.email, project);
+        }
+        setSaveStatus('Saved');
+      } catch (err) {
+        console.error("Failed to save projects", err);
+        setSaveStatus('Error saving');
+      }
+    };
+    persist();
+  }, [projects, user?.email]);
 
   useEffect(() => {
     if (isDoorModalOpen) {
@@ -1952,15 +2492,16 @@ const App = () => {
 
   const createProject = () => {
     const id = generateId();
-    const newProj = { 
-      id, 
-      name: "", 
-      type: "Commercial Office", 
+    const newProj = {
+      id,
+      name: "",
+      type: "Commercial Office",
       standard: "ANSI",
       details: { client: "", architect: "", jurisdiction: "IBC 2021", address: "" },
-      doors: [], 
+      doors: [],
       sets: [],
-      auditLog: [] 
+      auditLog: [],
+      instantInputs: cloneInstantInputs()
     };
     setProjects([...projects, newProj]);
     loadProject(id);
@@ -1972,44 +2513,125 @@ const App = () => {
     setView('wizard');
   };
 
-  const deleteProject = (id, e) => {
+  const deleteProject = async (id, e) => {
     e.stopPropagation();
-    if(confirm("Are you sure you want to delete this project?")) {
+    if (!window.confirm("Are you sure you want to delete this project?")) return;
+    try {
+      await deleteProjectForUser(id);
       setProjects(projects.filter(p => p.id !== id));
+      if (currentId === id) {
+        setCurrentId(null);
+        setView("dashboard");
+      }
+    } catch (err) {
+      console.error("Failed to delete project", err);
+      alert("Unable to delete project. Please try again.");
     }
   };
   
-  const resetApp = () => {
-    if(confirm("This will clear all data. Are you sure?")) {
-      localStorage.removeItem('specSmartDB');
+  const resetApp = async () => {
+    if (!window.confirm("This will clear all data for this user. Are you sure?")) return;
+    if (!user?.email) {
       setProjects([]);
-      setView('landing');
+      setView("landing");
+      return;
     }
-  }
+    try {
+      const currentProjects = await loadProjectsForUser(user.email);
+      await Promise.all(currentProjects.map((proj) => deleteProjectForUser(proj.id)));
+    } catch (err) {
+      console.error("Failed to reset projects", err);
+    }
+    setProjects([]);
+    setView("landing");
+  };
 
-  const saveProjectDetails = (name, type, standard, details) => {
-    const updatedProjects = projects.map(p => 
+  const updateInstantInput = (field, value) => {
+    setProjects((prev) =>
+      prev.map((p) => {
+        if (p.id !== currentId) return p;
+        const defaults = cloneInstantInputs();
+        const currentInstant = { ...defaults, ...(p.instantInputs || {}) };
+        const facilityType = p.type;
+        return {
+          ...p,
+          instantInputs: {
+            ...currentInstant,
+            [facilityType]: {
+              ...currentInstant[facilityType],
+              [field]: value
+            }
+          }
+        };
+      })
+    );
+  };
+
+  const handleInstantScheduleClick = () => {
+    const proj = getProj();
+    if (!proj) return;
+    const generated = generateInstantDoorSchedule(proj);
+    if (!generated.length) {
+      alert("Add more Instant Door Scheduling info in Step 1 to auto-generate doors.");
+      return;
+    }
+    if (proj.doors.length > 0) {
+      const append = window.confirm("Append generated doors to your existing schedule?");
+      if (!append) return;
+    }
+    setInstantDoorModal({ isOpen: true, doors: generated });
+  };
+
+  const applyInstantDoorSchedule = () => {
+    if (!instantDoorModal.doors.length) {
+      setInstantDoorModal({ isOpen: false, doors: [] });
+      return;
+    }
+    const proj = getProj();
+    if (!proj) return;
+    const updatedProjects = projects.map((p) =>
+      p.id === currentId ? { ...p, doors: [...p.doors, ...instantDoorModal.doors] } : p
+    );
+    setProjects(updatedProjects);
+    addToAuditLog(currentId, `Auto-generated ${instantDoorModal.doors.length} doors`);
+    setInstantDoorModal({ isOpen: false, doors: [] });
+  };
+
+  const saveProjectDetails = async (name, type, standard, details) => {
+    const updatedProjects = projects.map((p) =>
       p.id === currentId ? { ...p, name, type, standard, details } : p
     );
     setProjects(updatedProjects);
     addToAuditLog(currentId, `Updated project details: ${name}`);
     setStep(1);
+    if (user?.email) {
+      const current = updatedProjects.find((p) => p.id === currentId);
+      if (current) {
+        await saveProjectForUser(user.email, current);
+      }
+    }
   };
 
-  const saveDoor = () => {
+  const saveDoor = async () => {
     if (Object.keys(doorErrors).length > 0) return;
 
-    const updatedProjects = projects.map(p => {
+    const updatedProjects = projects.map((p) => {
       if (p.id === currentId) {
         const newDoors = [...p.doors];
         const doorId = doorForm.id || generateId();
-        const cleanedLocations = (doorForm.additionalLocations || []).filter((loc) => (loc.zone || loc.level || loc.roomName));
-        const doorData = normalizeDoor({ ...doorForm, id: doorId, additionalLocations: cleanedLocations });
-        
-        const idx = newDoors.findIndex(d => d.id === doorForm.id);
+        const cleanedLocations = (doorForm.additionalLocations || []).filter(
+          (loc) => loc.zone || loc.level || loc.roomName
+        );
+        const doorData = normalizeDoor({
+          ...doorForm,
+          id: doorId,
+          additionalLocations: cleanedLocations
+        });
+
+        const idx = newDoors.findIndex((d) => d.id === doorForm.id);
         if (idx >= 0) newDoors[idx] = doorData;
         else newDoors.push(doorData);
-        
+
         return { ...p, doors: newDoors };
       }
       return p;
@@ -2017,20 +2639,33 @@ const App = () => {
     setProjects(updatedProjects);
     addToAuditLog(currentId, `Saved door: ${doorForm.mark}`);
     setIsDoorModalOpen(false);
+
+    if (user?.email) {
+      const current = updatedProjects.find((p) => p.id === currentId);
+      if (current) {
+        await saveProjectForUser(user.email, current);
+      }
+    }
   };
 
-  const deleteDoor = (doorId) => {
-    const updatedProjects = projects.map(p => {
+  const deleteDoor = async (doorId) => {
+    const updatedProjects = projects.map((p) => {
       if (p.id === currentId) {
-        return { ...p, doors: p.doors.filter(d => d.id !== doorId) };
+        return { ...p, doors: p.doors.filter((d) => d.id !== doorId) };
       }
       return p;
     });
     setProjects(updatedProjects);
     addToAuditLog(currentId, `Deleted door ID: ${doorId}`);
+    if (user?.email) {
+      const current = updatedProjects.find((p) => p.id === currentId);
+      if (current) {
+        await saveProjectForUser(user.email, current);
+      }
+    }
   };
 
-  const duplicateDoor = (doorId) => {
+  const duplicateDoor = async (doorId) => {
     const proj = getProj();
     const original = proj.doors.find(d => d.id === doorId);
     const copies = prompt("How many copies do you want to create?", "1");
@@ -2050,28 +2685,51 @@ const App = () => {
     );
     setProjects(updatedProjects);
     addToAuditLog(currentId, `Bulk duplicated door ${original.mark} (${numCopies} times)`);
+    if (user?.email) {
+      const current = updatedProjects.find((p) => p.id === currentId);
+      if (current) {
+        await saveProjectForUser(user.email, current);
+      }
+    }
   };
 
-  const addAdditionalLocation = () => {
-    setDoorForm(prev => ({
-      ...prev,
-      additionalLocations: [...(prev.additionalLocations || []), { zone: prev.zone, level: prev.level, roomName: prev.roomName }]
-    }));
+  const modifyDoorAdditionalLocations = (doorId, updater) => {
+    setProjects((prev) =>
+      prev.map((p) => {
+        if (p.id !== currentId) return p;
+        const updatedDoors = p.doors.map((door) => {
+          if (door.id !== doorId) return door;
+          const currentList = [...(door.additionalLocations || [])];
+          const updatedList = updater(currentList, door) || [];
+          return normalizeDoor({ ...door, additionalLocations: updatedList });
+        });
+        return { ...p, doors: updatedDoors };
+      })
+    );
   };
 
-  const updateAdditionalLocation = (idx, field, value) => {
-    setDoorForm(prev => {
-      const updated = [...(prev.additionalLocations || [])];
+  const addDoorAdditionalLocation = (doorId) => {
+    const door = getProj()?.doors.find((d) => d.id === doorId);
+    if (!door) return;
+    modifyDoorAdditionalLocations(doorId, (list) => [
+      ...list,
+      { zone: door.zone, level: door.level, roomName: `${door.roomName} #${list.length + 2}` }
+    ]);
+  };
+
+  const updateDoorAdditionalLocation = (doorId, idx, field, value) => {
+    modifyDoorAdditionalLocations(doorId, (list) => {
+      const updated = [...list];
       updated[idx] = { ...updated[idx], [field]: value };
-      return { ...prev, additionalLocations: updated };
+      return updated;
     });
   };
 
-  const removeAdditionalLocation = (idx) => {
-    setDoorForm(prev => {
-      const updated = [...(prev.additionalLocations || [])];
+  const removeDoorAdditionalLocation = (doorId, idx) => {
+    modifyDoorAdditionalLocations(doorId, (list) => {
+      const updated = [...list];
       updated.splice(idx, 1);
-      return { ...prev, additionalLocations: updated };
+      return updated;
     });
   };
 
@@ -2336,17 +2994,23 @@ const App = () => {
       await Promise.resolve(action());
       return;
     }
-    const currentCount = getDownloadCount(user.email);
-    if (currentCount >= DOWNLOAD_LIMIT) {
-      setDownloadWarning(
-        "You’ve reached the 10-download limit for this beta. Please contact your InstaSpec admin to increase your download allowance."
-      );
-      return;
+    try {
+      const result = await incrementDownloadCount(user.email, DOWNLOAD_LIMIT);
+      if (!result.allowed) {
+        const message =
+          "You’ve reached the 10-download limit for this beta. Please contact your InstaSpec admin to increase your download allowance.";
+        setDownloadWarning(message);
+        alert(message);
+        setDownloadUsage({ count: result.count, limit: result.limit });
+        return;
+      }
+      setDownloadUsage(result);
+      setDownloadWarning("");
+      await Promise.resolve(action());
+    } catch (err) {
+      console.error("Failed to increment download usage", err);
+      alert("Unable to verify download limit. Please try again shortly.");
     }
-    incrementDownload(user.email);
-    setDownloadUsageTick((prev) => prev + 1);
-    setDownloadWarning("");
-    await Promise.resolve(action());
   };
 
   // Hardware Logic
@@ -2967,101 +3631,225 @@ const App = () => {
             </div>
 
             {/* Step 0: Setup */}
-            {step === 0 && (
-              <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-sm border border-gray-200 p-6 md:p-8 animate-slideUp">
-                <h2 className="text-xl font-bold mb-6 flex items-center gap-2"><Settings size={24}/> Project Context</h2>
-                <div className="space-y-6">
-                  
-                  {/* Basic Info */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {step === 0 && (() => {
+              const proj = getProj();
+              const facilityType = proj.type;
+              const facilityInputs = getInstantInputsForProject(proj, facilityType);
+              const numberField = (label, field, min = 0) => (
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-bold uppercase text-gray-500">{label}</label>
+                  <input
+                    type="number"
+                    min={min}
+                    value={facilityInputs[field] ?? ""}
+                    onChange={(e) => updateInstantInput(field, Math.max(min, parseInt(e.target.value, 10) || 0))}
+                    className="w-full p-2 border rounded"
+                  />
+                </div>
+              );
+              const booleanField = (label, field) => (
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-bold uppercase text-gray-500">{label}</label>
+                  <select
+                    value={facilityInputs[field] ? "yes" : "no"}
+                    onChange={(e) => updateInstantInput(field, e.target.value === "yes")}
+                    className="w-full p-2 border rounded bg-white"
+                  >
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                  </select>
+                </div>
+              );
+              const renderInstantFields = () => {
+                if (facilityType === "Residential") {
+                  return (
+                    <>
+                      {numberField("Number of Floors", "floors", 1)}
+                      {numberField("Units per Floor", "unitsPerFloor", 1)}
                       <div className="flex flex-col gap-1">
-                        <label className="text-xs font-bold uppercase text-gray-600">Project Name</label>
-                        <input
-                          type="text"
-                          placeholder="New Project"
-                          value={getProj().name}
-                          onChange={(e) => { const updated = projects.map(p => p.id === currentId ? {...p, name: e.target.value} : p); setProjects(updated); }}
-                          className="p-2.5 border rounded-md placeholder-gray-400"
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <label className="text-xs font-bold uppercase text-gray-600">Facility Type</label>
-                        <select value={getProj().type} onChange={(e) => { const updated = projects.map(p => p.id === currentId ? {...p, type: e.target.value} : p); setProjects(updated); }} className="p-2.5 border rounded-md bg-white">
-                            {Object.keys(FACILITY_DATA).map(t => <option key={t} value={t}>{t}</option>)}
+                        <label className="text-xs font-bold uppercase text-gray-500">Unit Type</label>
+                        <select
+                          value={facilityInputs.unitType || "2BHK"}
+                          onChange={(e) => updateInstantInput("unitType", e.target.value)}
+                          className="w-full p-2 border rounded bg-white"
+                        >
+                          <option value="1BHK">1BHK</option>
+                          <option value="2BHK">2BHK</option>
+                          <option value="3BHK">3BHK</option>
                         </select>
                       </div>
-                  </div>
+                      {booleanField("Floors identical?", "identicalFloors")}
+                    </>
+                  );
+                }
+                if (facilityType === "Education / School") {
+                  return (
+                    <>
+                      {numberField("Number of Floors", "floors", 1)}
+                      {numberField("Classrooms per Floor", "classroomsPerFloor", 0)}
+                      {numberField("Toilets per Floor", "toiletsPerFloor", 0)}
+                      {booleanField("Admin / Lab Rooms", "hasAdminLabs")}
+                    </>
+                  );
+                }
+                if (facilityType === "Commercial Office") {
+                  return (
+                    <>
+                      {numberField("Number of Floors", "floors", 1)}
+                      {booleanField("Open Office Layout", "openLayout")}
+                      {numberField("Meeting Rooms per Floor", "meetingRooms", 0)}
+                      {booleanField("Service / Back-of-House Areas", "hasServiceAreas")}
+                    </>
+                  );
+                }
+                if (facilityType === "Hospital / Healthcare") {
+                  return (
+                    <>
+                      {numberField("Number of Floors", "floors", 1)}
+                      {numberField("Patient Rooms per Floor", "patientRoomsPerFloor", 1)}
+                      {numberField("Operating Rooms", "operatingRooms", 0)}
+                      {numberField("ICU / Isolation Rooms per Floor", "icuRoomsPerFloor", 0)}
+                      {booleanField("Emergency Department", "hasEmergencyDept")}
+                    </>
+                  );
+                }
+                if (facilityType === "Airport / Transport") {
+                  return (
+                    <>
+                      {numberField("Number of Floors", "floors", 1)}
+                      {numberField("Concourses / Wings", "concourses", 1)}
+                      {numberField("Gates per Concourse", "gatesPerConcourse", 1)}
+                      {numberField("Security Checkpoints", "securityZones", 1)}
+                      {booleanField("International / Customs Zone", "hasInternationalZone")}
+                    </>
+                  );
+                }
+                if (facilityType === "Hospitality / Hotel") {
+                  return (
+                    <>
+                      {numberField("Number of Floors", "floors", 1)}
+                      {numberField("Guest Rooms per Floor", "roomsPerFloor", 1)}
+                      {numberField("Suites per Floor", "suitesPerFloor", 0)}
+                      {booleanField("Ballroom / Event Spaces", "hasBallroom")}
+                      {booleanField("Service / Back-of-House Areas", "hasServiceZones")}
+                    </>
+                  );
+                }
+                return (
+                  <>
+                    {numberField("Number of Floors", "floors", 1)}
+                    {numberField("Typical Rooms per Floor", "roomsPerFloor", 0)}
+                  </>
+                );
+              };
+              return (
+                <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-sm border border-gray-200 p-6 md:p-8 animate-slideUp">
+                  <h2 className="text-xl font-bold mb-6 flex items-center gap-2"><Settings size={24}/> Project Context</h2>
+                  <div className="space-y-6">
 
-                  {/* Architectural Context */}
-                  <div className="border-t pt-4">
-                      <h3 className="text-sm font-bold text-gray-800 mb-3">Architectural Details</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                              <label className="text-xs font-bold uppercase text-gray-500">Client / Owner</label>
-                              <input type="text" placeholder="e.g. Acme Corp" value={getProj().details?.client || ""} onChange={(e) => { const updated = projects.map(p => p.id === currentId ? {...p, details: {...p.details, client: e.target.value}} : p); setProjects(updated); }} className="w-full p-2 border rounded" />
-                          </div>
-                          <div>
-                              <label className="text-xs font-bold uppercase text-gray-500">Architect</label>
-                              <input type="text" placeholder="e.g. Design Studio" value={getProj().details?.architect || ""} onChange={(e) => { const updated = projects.map(p => p.id === currentId ? {...p, details: {...p.details, architect: e.target.value}} : p); setProjects(updated); }} className="w-full p-2 border rounded" />
-                          </div>
-                          {userRole !== 'Owner' && (
-                            <>
-                                <div>
-                                    <label className="text-xs font-bold uppercase text-gray-500">Hardware Standard</label>
-                                    <select 
-                                        value={getProj().standard} 
-                                        onChange={(e) => { 
-                                            const newStd = e.target.value;
-                                            let newJurisdiction = getProj().details?.jurisdiction;
+                    {/* Basic Info */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs font-bold uppercase text-gray-600">Project Name</label>
+                          <input
+                            type="text"
+                            placeholder="New Project"
+                            value={proj.name}
+                            onChange={(e) => { const updated = projects.map(p => p.id === currentId ? {...p, name: e.target.value} : p); setProjects(updated); }}
+                            className="p-2.5 border rounded-md placeholder-gray-400"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs font-bold uppercase text-gray-600">Facility Type</label>
+                          <select value={proj.type} onChange={(e) => { const updated = projects.map(p => p.id === currentId ? {...p, type: e.target.value} : p); setProjects(updated); }} className="p-2.5 border rounded-md bg-white">
+                              {Object.keys(FACILITY_DATA).map(t => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                        </div>
+                    </div>
 
-                                            // Auto-switch logic
-                                            if (newStd.includes("ANSI")) {
-                                                newJurisdiction = "NFPA 101 (Life Safety Code)";
-                                            } else if (newStd.includes("EN")) {
-                                                newJurisdiction = "IBC 2021 (International Building Code)"; 
-                                            }
+                    {/* Architectural Context */}
+                    <div className="border-t pt-4">
+                        <h3 className="text-sm font-bold text-gray-800 mb-3">Architectural Details</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="text-xs font-bold uppercase text-gray-500">Client / Owner</label>
+                                <input type="text" placeholder="e.g. Acme Corp" value={proj.details?.client || ""} onChange={(e) => { const updated = projects.map(p => p.id === currentId ? {...p, details: {...p.details, client: e.target.value}} : p); setProjects(updated); }} className="w-full p-2 border rounded" />
+                            </div>
+                            <div>
+                                <label className="text-xs font-bold uppercase text-gray-500">Architect</label>
+                                <input type="text" placeholder="e.g. Design Studio" value={proj.details?.architect || ""} onChange={(e) => { const updated = projects.map(p => p.id === currentId ? {...p, details: {...p.details, architect: e.target.value}} : p); setProjects(updated); }} className="w-full p-2 border rounded" />
+                            </div>
+                            {userRole !== 'Owner' && (
+                              <>
+                                  <div>
+                                      <label className="text-xs font-bold uppercase text-gray-500">Hardware Standard</label>
+                                      <select
+                                          value={proj.standard}
+                                          onChange={(e) => {
+                                              const newStd = e.target.value;
+                                              let newJurisdiction = proj.details?.jurisdiction;
 
-                                            const updated = projects.map(p => 
-                                                p.id === currentId 
-                                                ? { ...p, standard: newStd, details: { ...p.details, jurisdiction: newJurisdiction } } 
-                                                : p
-                                            ); 
-                                            setProjects(updated); 
-                                        }} 
-                                        className="w-full p-2 border rounded bg-white"
-                                    >
-                                        <option value="ANSI">ANSI / BHMA (US)</option>
-                                        <option value="EN">EN / ISO (EU)</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="text-xs font-bold uppercase text-gray-500">Code Jurisdiction</label>
-                                    <select value={getProj().details?.jurisdiction || "IBC 2021"} onChange={(e) => { const updated = projects.map(p => p.id === currentId ? {...p, details: {...p.details, jurisdiction: e.target.value}} : p); setProjects(updated); }} className="w-full p-2 border rounded bg-white">
-                                        <option>IBC 2021 (International Building Code)</option>
-                                        <option>NFPA 101 (Life Safety Code)</option>
-                                        <option>Local / Municipal Code</option>
-                                    </select>
-                                </div>
-                            </>
-                          )}
+                                              if (newStd.includes("ANSI")) {
+                                                  newJurisdiction = "NFPA 101 (Life Safety Code)";
+                                              } else if (newStd.includes("EN")) {
+                                                  newJurisdiction = "IBC 2021 (International Building Code)";
+                                              }
+
+                                              const updated = projects.map(p =>
+                                                  p.id === currentId
+                                                  ? { ...p, standard: newStd, details: { ...p.details, jurisdiction: newJurisdiction } }
+                                                  : p
+                                              );
+                                              setProjects(updated);
+                                          }}
+                                          className="w-full p-2 border rounded bg-white"
+                                      >
+                                          <option value="ANSI">ANSI / BHMA (US)</option>
+                                          <option value="EN">EN / ISO (EU)</option>
+                                      </select>
+                                  </div>
+                                  <div>
+                                      <label className="text-xs font-bold uppercase text-gray-500">Code Jurisdiction</label>
+                                      <select value={proj.details?.jurisdiction || "IBC 2021"} onChange={(e) => { const updated = projects.map(p => p.id === currentId ? {...p, details: {...p.details, jurisdiction: e.target.value}} : p); setProjects(updated); }} className="w-full p-2 border rounded bg-white">
+                                          <option>IBC 2021 (International Building Code)</option>
+                                          <option>NFPA 101 (Life Safety Code)</option>
+                                          <option>Local / Municipal Code</option>
+                                      </select>
+                                  </div>
+                              </>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="border-t pt-6">
+                      <div className="flex flex-col gap-1 mb-4">
+                        <h3 className="text-sm font-bold text-gray-800">Instant Door Scheduling (Optional)</h3>
+                        <p className="text-xs text-gray-500">Answer a few quick questions and we can auto-populate a starting door schedule for you.</p>
                       </div>
-                  </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="col-span-full text-xs font-bold uppercase tracking-wide text-indigo-700 bg-indigo-50 border border-indigo-100 rounded px-3 py-2">
+                          Facility: {facilityType}
+                        </div>
+                        {renderInstantFields()}
+                      </div>
+                    </div>
 
-                  <div className="flex justify-end mt-6">
-                    <button onClick={() => setStep(1)} className="w-full md:w-auto px-6 py-2.5 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 font-medium flex items-center justify-center gap-2">
-                      Save & Continue <ArrowRight size={18} />
-                    </button>
+                    <div className="flex justify-end mt-6">
+                      <button onClick={() => setStep(1)} className="w-full md:w-auto px-6 py-2.5 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 font-medium flex items-center justify-center gap-2">
+                        Save & Continue <ArrowRight size={18} />
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Step 1: Door Schedule */}
             {step === 1 && (
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 md:p-6 animate-slideUp">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
                   <h2 className="text-xl font-bold">Door Schedule</h2>
-                  <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 w-full sm:w-auto">
                     <button onClick={() => openDoorModal()} className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 font-medium flex items-center justify-center gap-2 whitespace-nowrap">
                       <PlusCircle size={18} />
                       <span>Add Door</span>
@@ -3079,6 +3867,13 @@ const App = () => {
                       className="flex-1 px-4 py-2 border border-indigo-200 text-indigo-700 rounded-md hover:bg-indigo-50 font-medium"
                     >
                       Bulk Assign
+                    </button>
+                    <button
+                      onClick={handleInstantScheduleClick}
+                      className="flex-1 px-4 py-2 border border-amber-200 text-amber-700 rounded-md hover:bg-amber-50 font-medium flex items-center justify-center gap-2 whitespace-nowrap"
+                      title="Not sure where to begin? Generate a starter door list based on your building."
+                    >
+                      <Zap size={18} /> Instant Door Schedule
                     </button>
                   </div>
                 </div>
@@ -3107,12 +3902,74 @@ const App = () => {
                         {getProj().doors.map(d => (
                           <tr key={d.id} className="hover:bg-gray-50">
                             <td className="p-3 border-b font-bold text-indigo-600">{d.mark}</td>
-                            <td className="p-3 border-b">
+                            <td className="p-3 border-b align-top">
                                 <span className="font-semibold text-gray-700">{d.roomName}</span>
                                 <div className="text-xs text-gray-400">{d.zone} • Lvl {d.level}</div>
-                                {d.additionalLocations?.length > 0 && (
-                                  <div className="text-[11px] text-indigo-600 font-semibold mt-1">+{d.additionalLocations.length} more locations</div>
-                                )}
+                                <div className="text-[11px] text-indigo-600 font-semibold mt-1 relative">
+                                  <button
+                                    onClick={() => setActiveLocationsDoorId(activeLocationsDoorId === d.id ? null : d.id)}
+                                    className="hover:underline"
+                                  >
+                                    {activeLocationsDoorId === d.id
+                                      ? "Hide locations"
+                                      : d.additionalLocations?.length
+                                      ? `+${d.additionalLocations.length} more locations`
+                                      : "Add additional locations"}
+                                  </button>
+                                  {activeLocationsDoorId === d.id && (
+                                    <div className="mt-2 border border-indigo-200 bg-white rounded-lg shadow-xl p-3 text-xs text-gray-600 space-y-2">
+                                      {d.additionalLocations?.length ? (
+                                        d.additionalLocations.map((loc, idx) => (
+                                          <div key={idx} className="grid grid-cols-[1fr_80px_1fr_auto] gap-2 items-center">
+                                            <input
+                                              type="text"
+                                              value={loc.zone}
+                                              onChange={(e) => updateDoorAdditionalLocation(d.id, idx, "zone", e.target.value)}
+                                              className="p-1 border rounded"
+                                              placeholder="Zone"
+                                            />
+                                            <input
+                                              type="text"
+                                              value={loc.level}
+                                              onChange={(e) => updateDoorAdditionalLocation(d.id, idx, "level", e.target.value)}
+                                              className="p-1 border rounded"
+                                              placeholder="Lvl"
+                                            />
+                                            <input
+                                              type="text"
+                                              value={loc.roomName}
+                                              onChange={(e) => updateDoorAdditionalLocation(d.id, idx, "roomName", e.target.value)}
+                                              className="p-1 border rounded"
+                                              placeholder="Room"
+                                            />
+                                            <button
+                                              onClick={() => removeDoorAdditionalLocation(d.id, idx)}
+                                              className="text-red-500 hover:text-red-700 text-[11px]"
+                                            >
+                                              Remove
+                                            </button>
+                                          </div>
+                                        ))
+                                      ) : (
+                                        <p className="text-[11px] text-gray-500">No additional locations yet.</p>
+                                      )}
+                                      <div className="flex justify-between items-center pt-2 border-t border-gray-100">
+                                        <button
+                                          onClick={() => addDoorAdditionalLocation(d.id)}
+                                          className="text-indigo-600 hover:underline text-[11px]"
+                                        >
+                                          + Add Location
+                                        </button>
+                                        <button
+                                          onClick={() => setActiveLocationsDoorId(null)}
+                                          className="text-gray-500 hover:text-gray-700 text-[11px]"
+                                        >
+                                          Close
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
                             </td>
                             <td className="p-3 border-b">{d.qty}</td>
                             <td className="p-3 border-b">{d.width} x {d.height}</td>
@@ -3490,6 +4347,14 @@ const App = () => {
                       >
                         <FileSpreadsheet size={18} /> Export Schedule
                       </button>
+                      {user && (
+                        <button
+                          onClick={() => setIsReportFeedbackOpen(true)}
+                          className="px-4 py-2 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 font-semibold flex items-center justify-center gap-2 shadow-sm text-sm"
+                        >
+                          <AlertCircle size={18} /> Report feedback
+                        </button>
+                      )}
                   </div>
                   {!isAdmin && user && (
                     <div className="text-xs text-gray-500 mt-2">
@@ -3642,22 +4507,10 @@ const App = () => {
               </div>
 
               <div className="border border-gray-200 rounded-lg p-4 bg-white">
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-bold uppercase text-gray-500">Additional Locations</label>
-                  <button onClick={addAdditionalLocation} className="text-xs text-indigo-600 hover:underline font-semibold">+ Add Location</button>
-                </div>
-                {doorForm.additionalLocations?.length ? (
-                  doorForm.additionalLocations.map((loc, idx) => (
-                    <div key={idx} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto] gap-2 mt-2 items-start">
-                      <input type="text" value={loc.zone} onChange={(e) => updateAdditionalLocation(idx, 'zone', e.target.value)} className="p-2 border rounded" placeholder="Zone" />
-                      <input type="text" value={loc.level} onChange={(e) => updateAdditionalLocation(idx, 'level', e.target.value)} className="p-2 border rounded" placeholder="Level" />
-                      <input type="text" value={loc.roomName} onChange={(e) => updateAdditionalLocation(idx, 'roomName', e.target.value)} className="p-2 border rounded" placeholder="Room Name" />
-                      <button onClick={() => removeAdditionalLocation(idx)} className="text-red-500 text-xs font-bold">Remove</button>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-xs text-gray-500">Add more zones/levels/rooms that use this exact hardware spec.</p>
-                )}
+                <label className="text-xs font-bold uppercase text-gray-500 mb-1 block">Additional Locations</label>
+                <p className="text-xs text-gray-500">
+                  Manage locations directly from the door schedule by expanding the “+N more locations” dropdown.
+                </p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -3971,6 +4824,62 @@ const App = () => {
           </div>
         </div>
       )}
+      {instantDoorModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 sm:p-6">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl flex flex-col">
+            <div className="p-4 md:p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50 rounded-t-xl">
+              <div>
+                <h3 className="text-lg font-bold">Instant Door Schedule Preview</h3>
+                <p className="text-xs text-gray-500">Review and confirm the generated door list before inserting.</p>
+              </div>
+              <button onClick={() => setInstantDoorModal({ isOpen: false, doors: [] })} className="text-gray-400 hover:text-gray-600">
+                <X size={20}/>
+              </button>
+            </div>
+            <div className="p-4 md:p-6 overflow-y-auto max-h-[60vh]">
+              {instantDoorModal.doors.length === 0 ? (
+                <div className="text-sm text-gray-500">No doors generated.</div>
+              ) : (
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200">
+                      <th className="text-left p-2">Mark</th>
+                      <th className="text-left p-2">Usage</th>
+                      <th className="text-left p-2">Qty</th>
+                      <th className="text-left p-2">Material</th>
+                      <th className="text-left p-2">Fire Rating</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {instantDoorModal.doors.map((door) => (
+                      <tr key={door.id} className="border-b border-gray-100">
+                        <td className="p-2 font-semibold text-indigo-600">{door.mark}</td>
+                        <td className="p-2">
+                          <div className="font-medium text-gray-800">{door.use}</div>
+                          <div className="text-xs text-gray-500">{door.roomName}</div>
+                        </td>
+                        <td className="p-2">{door.qty}</td>
+                        <td className="p-2">{door.material}</td>
+                        <td className="p-2">{door.fire > 0 ? `${door.fire} min` : "NFR"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              <p className="text-xs text-gray-500 mt-4">Need to undo? Simply delete the generated doors from the schedule later.</p>
+            </div>
+            <div className="p-4 md:p-6 border-t border-gray-100 flex justify-end gap-2 bg-gray-50 rounded-b-xl">
+              <button onClick={() => setInstantDoorModal({ isOpen: false, doors: [] })} className="px-4 py-2 text-sm border rounded">Cancel</button>
+              <button
+                onClick={applyInstantDoorSchedule}
+                className="px-4 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 flex items-center gap-2"
+              >
+                Confirm & Insert
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {isAdmin && (
         <BetaAdminPanel
           isOpen={isAdminOpen}
@@ -3980,6 +4889,10 @@ const App = () => {
       <BetaFeedbackModal
         isOpen={isFeedbackOpen}
         onClose={() => setIsFeedbackOpen(false)}
+      />
+      <FeedbackModal
+        isOpen={isReportFeedbackOpen}
+        onClose={() => setIsReportFeedbackOpen(false)}
       />
     </div>
   );

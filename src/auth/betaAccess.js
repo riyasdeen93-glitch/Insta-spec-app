@@ -1,38 +1,39 @@
-// src/auth/betaAccess.js
-// Centralized beta/admin configuration helpers with localStorage persistence.
+import { db } from "../firebase";
+import {
+  doc,
+  getDoc,
+  setDoc,
+  deleteDoc,
+  collection,
+  getDocs,
+  query,
+  where,
+  runTransaction
+} from "firebase/firestore";
 
 const STORAGE_KEYS = {
-  whitelist: "instaspec:betaWhitelist",
-  admins: "instaspec:betaAdmins",
-  betaCode: "instaspec:betaCode", // default global tester code
-  betaConfig: "instaspec:betaConfig",
   loginLog: "instaspec:betaLoginLog",
   feedback: "instaspec:betaFeedback",
   usage: "instaspec:betaUsage"
 };
 
 const hasWindow = typeof window !== "undefined";
+const DOWNLOAD_USAGE_COLLECTION = "betaUsage";
+const DEFAULT_DOWNLOAD_LIMIT = 10;
 
-const DEFAULT_WHITELIST = [
-  "tester1@techarix.com",
-  "tester2@techarix.com",
-  "tester3@techarix.com",
-  "admin@techarix.com"
-];
-
-const DEFAULT_ADMINS = [
+export const ADMIN_EMAILS = [
   "admin@techarix.com"
 ];
 
 export const MASTER_ADMIN_CODE =
   import.meta.env.VITE_MASTER_BETA_CODE || "INSTASPECMASTER@2025";
 
-const DEFAULT_BETA_CONFIG = { users: {} };
+export const normalizeEmail = (value = "") => value.trim().toLowerCase();
 
-const MAX_LOGIN_LOGS = 50;
-const RECENT_LOGIN_LIMIT = 20;
+const randomChunk = () => Math.random().toString(36).substring(2, 6).toUpperCase();
+export const generateNewBetaCode = () => `BETA-${randomChunk()}-${randomChunk()}`;
 
-const normalizeEmail = (value = "") => value.trim().toLowerCase();
+const betaUserCache = new Map();
 
 const readJSON = (key, fallback) => {
   if (!hasWindow) return fallback;
@@ -55,376 +56,94 @@ const writeJSON = (key, value) => {
   }
 };
 
-const mutateArray = (target, nextValues) => {
-  target.splice(0, target.length, ...nextValues);
-};
-
-const randomChunk = () => Math.random().toString(36).substring(2, 6).toUpperCase();
-const generatePerUserCode = () => `BETA-${randomChunk()}-${randomChunk()}`;
-
-const loadInitialList = (key, defaults) => {
-  const stored = readJSON(key, defaults);
-  const cleaned = Array.isArray(stored)
-    ? stored.map((email) => normalizeEmail(email)).filter(Boolean)
-    : defaults;
-  return cleaned.length ? cleaned : defaults;
-};
-
-const whitelistStore = loadInitialList(STORAGE_KEYS.whitelist, DEFAULT_WHITELIST);
-const adminStore = loadInitialList(STORAGE_KEYS.admins, DEFAULT_ADMINS);
-
-export const BETA_WHITELIST = whitelistStore;
-export const ADMIN_EMAILS = adminStore;
-
-const normalizeBetaConfig = (raw = DEFAULT_BETA_CONFIG) => {
-  const users = {};
-  if (raw && typeof raw === "object" && raw.users && typeof raw.users === "object") {
-    Object.entries(raw.users).forEach(([email, entry]) => {
-      const normalizedEmail = normalizeEmail(email);
-      if (!normalizedEmail) return;
-      users[normalizedEmail] = {
-        code:
-          typeof entry?.code === "string" && entry.code.trim()
-            ? entry.code.trim().toUpperCase()
-            : generatePerUserCode(),
-        isAdmin: Boolean(entry?.isAdmin)
-      };
-    });
-  }
-  return { users };
-};
-
-const cloneConfig = (config) => ({
-  users: Object.fromEntries(
-    Object.entries(config.users || {}).map(([email, entry]) => [
-      email,
-      { ...entry }
-    ])
-  )
-});
-
-const readBetaConfigFromStorage = () =>
-  normalizeBetaConfig(readJSON(STORAGE_KEYS.betaConfig, DEFAULT_BETA_CONFIG));
-
-let betaConfigCache = readBetaConfigFromStorage();
-
-const persistBetaConfig = () => {
-  if (!hasWindow) return;
-  window.localStorage.setItem(STORAGE_KEYS.betaConfig, JSON.stringify(betaConfigCache));
-};
-
-const ensureConfigIntegrity = (config) => {
-  const next = normalizeBetaConfig(config);
-  let changed = false;
-
-  // Ensure every whitelisted email has an entry.
-  BETA_WHITELIST.forEach((email) => {
-    const normalized = normalizeEmail(email);
-    if (!normalized) return;
-    if (!next.users[normalized]) {
-      next.users[normalized] = {
-        code: generatePerUserCode(),
-        isAdmin: ADMIN_EMAILS.includes(normalized)
-      };
-      changed = true;
-    }
-  });
-
-  // Sync admin flags to ADMIN_EMAILS.
-  Object.keys(next.users).forEach((email) => {
-    const shouldBeAdmin = ADMIN_EMAILS.includes(email);
-    if (typeof shouldBeAdmin === "boolean" && next.users[email].isAdmin !== shouldBeAdmin) {
-      next.users[email].isAdmin = shouldBeAdmin;
-      changed = true;
-    }
-  });
-
-  return { config: next, changed };
-};
-
-{
-  const integrity = ensureConfigIntegrity(readBetaConfigFromStorage());
-  betaConfigCache = integrity.config;
-  if (integrity.changed) persistBetaConfig();
+export async function getBetaUser(rawEmail) {
+  const email = normalizeEmail(rawEmail);
+  if (!email) return null;
+  const ref = doc(db, "betaUsers", email);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+  const data = { ...snap.data(), email };
+  betaUserCache.set(email, data);
+  return data;
 }
 
-const loadStoredBetaCode = () => {
-  const stored = hasWindow ? window.localStorage.getItem(STORAGE_KEYS.betaCode) : "";
-  return stored || import.meta.env.VITE_BETA_ACCESS_CODE || "";
-};
-
-export let CURRENT_BETA_CODE = loadStoredBetaCode();
-
-const loginLogStore = readJSON(STORAGE_KEYS.loginLog, []);
-
-const persistWhitelist = () => writeJSON(STORAGE_KEYS.whitelist, BETA_WHITELIST);
-const persistAdmins = () => writeJSON(STORAGE_KEYS.admins, ADMIN_EMAILS);
-const persistBetaCode = () => {
-  if (!hasWindow) return;
-  if (CURRENT_BETA_CODE) {
-    window.localStorage.setItem(STORAGE_KEYS.betaCode, CURRENT_BETA_CODE);
-  } else {
-    window.localStorage.removeItem(STORAGE_KEYS.betaCode);
-  }
-};
-const persistLoginLog = () => writeJSON(STORAGE_KEYS.loginLog, loginLogStore);
-
-// --- Beta feedback helpers ---
-const readFeedbackList = () => {
-  const stored = readJSON(STORAGE_KEYS.feedback, []);
-  if (!Array.isArray(stored)) return [];
-  return stored.map((entry) => ({
-    id: entry?.id || `fdbk_${Date.now()}`,
-    email: (entry?.email || "").toLowerCase(),
-    createdAt: typeof entry?.createdAt === "number" ? entry.createdAt : Date.now(),
-    context: entry?.context || "Other",
-    message: entry?.message || "",
-    imageDataUrl: entry?.imageDataUrl || null
-  }));
-};
-
-let feedbackCache = readFeedbackList();
-
-const persistFeedback = () => writeJSON(STORAGE_KEYS.feedback, feedbackCache);
-
-export const loadFeedback = () =>
-  [...feedbackCache].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-
-export const saveFeedback = (list = []) => {
-  feedbackCache = Array.isArray(list) ? list : [];
-  persistFeedback();
-  return loadFeedback();
-};
-
-export const addFeedback = ({ email, context, message, imageDataUrl }) => {
-  const entry = {
-    id: `fdbk_${Date.now()}`,
-    email: normalizeEmail(email),
-    createdAt: Date.now(),
-    context: context || "Other",
-    message: message || "",
-    imageDataUrl: imageDataUrl || null
-  };
-  feedbackCache = [entry, ...feedbackCache];
-  persistFeedback();
-  return entry;
-};
-
-// --- Download usage helpers ---
-const readUsageFromStorage = () => {
-  const stored = readJSON(STORAGE_KEYS.usage, {});
-  if (!stored || typeof stored !== "object") return {};
-  const normalized = {};
-  Object.entries(stored).forEach(([email, usage]) => {
-    const key = normalizeEmail(email);
-    if (!key) return;
-    normalized[key] = {
-      downloadCount: Number(usage?.downloadCount) || 0,
-      lastDownloadAt: typeof usage?.lastDownloadAt === "number" ? usage.lastDownloadAt : 0
-    };
+export async function listBetaUsers() {
+  const snap = await getDocs(collection(db, "betaUsers"));
+  const users = snap.docs.map((docSnap) => {
+    const data = docSnap.data();
+    const email = data.email || docSnap.id;
+    const normalized = normalizeEmail(email);
+    const payload = { ...data, email: normalized };
+    betaUserCache.set(normalized, payload);
+    return payload;
   });
-  return normalized;
-};
+  return users;
+}
 
-let usageCache = readUsageFromStorage();
-
-const persistUsage = () => writeJSON(STORAGE_KEYS.usage, usageCache);
-
-export const getUsageForEmail = (email) => {
-  const key = normalizeEmail(email);
-  if (!key) return { downloadCount: 0, lastDownloadAt: 0 };
-  return usageCache[key] ? { ...usageCache[key] } : { downloadCount: 0, lastDownloadAt: 0 };
-};
-
-export const getDownloadCount = (email) => getUsageForEmail(email).downloadCount || 0;
-
-export const incrementDownload = (email) => {
-  const key = normalizeEmail(email);
-  if (!key) return { downloadCount: 0, lastDownloadAt: 0 };
-  const existing = usageCache[key] || { downloadCount: 0, lastDownloadAt: 0 };
-  const updated = {
-    downloadCount: (existing.downloadCount || 0) + 1,
-    lastDownloadAt: Date.now()
-  };
-  usageCache[key] = updated;
-  persistUsage();
-  return { ...updated };
-};
-
-const ensureEmailEntry = (email, overrides = {}) => {
-  const normalized = normalizeEmail(email);
-  if (!normalized) return null;
-  const existing = betaConfigCache.users[normalized];
-  const nextEntry = {
-    code: overrides.code || existing?.code || generatePerUserCode(),
-    isAdmin:
-      typeof overrides.isAdmin === "boolean"
-        ? overrides.isAdmin
-        : existing?.isAdmin ?? ADMIN_EMAILS.includes(normalized)
-  };
-  betaConfigCache.users[normalized] = nextEntry;
-  persistBetaConfig();
-  return nextEntry;
-};
-
-export const loadBetaConfig = () => {
-  const integrity = ensureConfigIntegrity(readBetaConfigFromStorage());
-  betaConfigCache = integrity.config;
-  if (integrity.changed) persistBetaConfig();
-  return cloneConfig(betaConfigCache);
-};
-
-export const saveBetaConfig = (config) => {
-  const integrity = ensureConfigIntegrity(config);
-  betaConfigCache = integrity.config;
-  if (integrity.changed) persistBetaConfig();
-  return cloneConfig(betaConfigCache);
-};
-
-export const getUserEntry = (email) => {
-  const normalized = normalizeEmail(email);
-  if (!normalized) return null;
-  return betaConfigCache.users[normalized] ? { ...betaConfigCache.users[normalized] } : null;
-};
-
-export const upsertUserEntry = (email, partial = {}) => {
-  const normalized = normalizeEmail(email);
-  if (!normalized) return null;
-  const existing = betaConfigCache.users[normalized];
-  const entry = {
-    code:
-      typeof partial.code === "string" && partial.code.trim()
-        ? partial.code.trim().toUpperCase()
-        : existing?.code || generatePerUserCode(),
-    isAdmin:
-      typeof partial.isAdmin === "boolean"
-        ? partial.isAdmin
-        : existing?.isAdmin ?? ADMIN_EMAILS.includes(normalized)
-  };
-  betaConfigCache.users[normalized] = entry;
-  persistBetaConfig();
-  return { ...entry };
-};
-
-export const removeUserEntry = (email) => {
-  const normalized = normalizeEmail(email);
-  if (!normalized || !betaConfigCache.users[normalized]) return;
-  delete betaConfigCache.users[normalized];
-  persistBetaConfig();
-};
-
-export const regenerateUserCode = (email) => {
-  const normalized = normalizeEmail(email);
-  if (!normalized) return null;
-  const newCode = generatePerUserCode();
-  upsertUserEntry(normalized, { code: newCode });
-  return { ...betaConfigCache.users[normalized] };
-};
-
-export function validateBetaAccess(rawEmail, rawCode) {
+export async function saveBetaUser({
+  email: rawEmail,
+  code,
+  plan = "beta_tester",
+  isAdmin = false,
+  hours = 1,
+  expiresAt
+}) {
   const email = normalizeEmail(rawEmail);
-  const code = (rawCode || "").trim();
-  if (!email || !code) return false;
+  if (!email) throw new Error("Missing email");
+  const ref = doc(db, "betaUsers", email);
+  const now = Date.now();
+  const existingSnap = await getDoc(ref);
+  const existing = existingSnap.exists() ? existingSnap.data() : null;
+  const createdAt = existing?.createdAt || now;
+  const expiry = typeof expiresAt === "number" ? expiresAt : now + hours * 60 * 60 * 1000;
 
-  if (isAdminEmail(email) && code === MASTER_ADMIN_CODE) {
-    return true;
-  }
+  const payload = {
+    email,
+    code,
+    plan,
+    isAdmin,
+    expiresAt: expiry,
+    updatedAt: now,
+    createdAt
+  };
 
-  const userEntry = getUserEntry(email);
-  if (userEntry?.code && code.toUpperCase() === userEntry.code) {
-    return true;
-  }
+  await setDoc(ref, payload, { merge: true });
+  betaUserCache.set(email, payload);
+  return payload;
+}
 
-  const fallbackCode = CURRENT_BETA_CODE || import.meta.env.VITE_BETA_ACCESS_CODE;
-  if (BETA_WHITELIST.includes(email) && fallbackCode && code === fallbackCode) {
-    return true;
-  }
+export async function deleteBetaUser(rawEmail) {
+  const email = normalizeEmail(rawEmail);
+  if (!email) return;
+  await deleteDoc(doc(db, "betaUsers", email));
+  betaUserCache.delete(email);
+}
 
-  return false;
+export async function validateBetaAccess(rawEmail, code) {
+  if (!rawEmail || !code) return false;
+  const email = normalizeEmail(rawEmail);
+  const user = await getBetaUser(email);
+  if (!user) return false;
+  const now = Date.now();
+  const codeMatches = user.code === code;
+  const notExpired = !user.expiresAt || now <= user.expiresAt;
+  return codeMatches && notExpired ? user : false;
 }
 
 export function isAdminEmail(rawEmail) {
-  if (!rawEmail) return false;
   const email = normalizeEmail(rawEmail);
+  if (!email) return false;
+  if (betaUserCache.has(email)) {
+    return Boolean(betaUserCache.get(email)?.isAdmin);
+  }
   return ADMIN_EMAILS.includes(email);
 }
 
-export const getBetaConfig = () => ({
-  whitelist: [...BETA_WHITELIST],
-  admins: [...ADMIN_EMAILS],
-  betaCode: CURRENT_BETA_CODE || import.meta.env.VITE_BETA_ACCESS_CODE || "",
-  defaultTesterCode: CURRENT_BETA_CODE || import.meta.env.VITE_BETA_ACCESS_CODE || "",
-  masterAdminCode: MASTER_ADMIN_CODE,
-  userEntries: cloneConfig(betaConfigCache).users
-});
+const MAX_LOGIN_LOGS = 50;
+const RECENT_LOGIN_LIMIT = 20;
+const loginLogStore = readJSON(STORAGE_KEYS.loginLog, []);
 
-export const updateWhitelist = (nextList = []) => {
-  const normalized = Array.from(
-    new Set(
-      nextList
-        .map((email) => normalizeEmail(email))
-        .filter(Boolean)
-    )
-  );
-  const removed = BETA_WHITELIST.filter((email) => !normalized.includes(email));
-  mutateArray(BETA_WHITELIST, normalized);
-  persistWhitelist();
-
-  normalized.forEach((email) => ensureEmailEntry(email));
-  removed.forEach((email) => {
-    if (!ADMIN_EMAILS.includes(email)) {
-      removeUserEntry(email);
-    }
-  });
-
-  return [...BETA_WHITELIST];
-};
-
-export const updateAdmins = (nextAdmins = []) => {
-  const normalized = Array.from(
-    new Set(
-      nextAdmins
-        .map((email) => normalizeEmail(email))
-        .filter(Boolean)
-    )
-  );
-  mutateArray(ADMIN_EMAILS, normalized);
-  persistAdmins();
-
-  // Ensure admins remain on whitelist and config reflects admin role.
-  ADMIN_EMAILS.forEach((email) => {
-    if (!BETA_WHITELIST.includes(email)) {
-      BETA_WHITELIST.push(email);
-      persistWhitelist();
-    }
-    upsertUserEntry(email, { isAdmin: true });
-  });
-
-  Object.keys(betaConfigCache.users).forEach((email) => {
-    if (!ADMIN_EMAILS.includes(email)) {
-      const entry = betaConfigCache.users[email];
-      if (entry?.isAdmin) {
-        entry.isAdmin = false;
-        persistBetaConfig();
-      }
-    }
-  });
-
-  return [...ADMIN_EMAILS];
-};
-
-export const updateBetaCode = (newCode) => {
-  const trimmed = (newCode || "").trim();
-  if (trimmed) {
-    CURRENT_BETA_CODE = trimmed.toUpperCase();
-  } else {
-    CURRENT_BETA_CODE = import.meta.env.VITE_BETA_ACCESS_CODE || "";
-  }
-  persistBetaCode();
-  return CURRENT_BETA_CODE;
-};
-
-export const generateNewBetaCode = () => `BETA-${randomChunk()}-${randomChunk()}`;
+const persistLoginLog = () => writeJSON(STORAGE_KEYS.loginLog, loginLogStore);
 
 export const getLoginStats = () => {
   const recent = loginLogStore
@@ -451,14 +170,85 @@ export const recordSuccessfulLogin = (email, isAdmin) => {
   persistLoginLog();
 };
 
-export const resetBetaConfig = () => {
-  updateWhitelist(DEFAULT_WHITELIST);
-  updateAdmins(DEFAULT_ADMINS);
-  CURRENT_BETA_CODE = import.meta.env.VITE_BETA_ACCESS_CODE || "";
-  persistBetaCode();
-  const integrity = ensureConfigIntegrity(DEFAULT_BETA_CONFIG);
-  betaConfigCache = integrity.config;
-  if (integrity.changed) persistBetaConfig();
-  loginLogStore.splice(0, loginLogStore.length);
-  persistLoginLog();
+const readFeedbackList = () => {
+  const stored = readJSON(STORAGE_KEYS.feedback, []);
+  if (!Array.isArray(stored)) return [];
+  return stored.map((entry) => ({
+    id: entry?.id || `fdbk_${Date.now()}`,
+    email: normalizeEmail(entry?.email || ""),
+    createdAt: typeof entry?.createdAt === "number" ? entry.createdAt : Date.now(),
+    context: entry?.context || "Other",
+    message: entry?.message || "",
+    imageDataUrl: entry?.imageDataUrl || null
+  }));
 };
+
+let feedbackCache = readFeedbackList();
+const persistFeedback = () => writeJSON(STORAGE_KEYS.feedback, feedbackCache);
+
+export const loadFeedback = () =>
+  [...feedbackCache].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+export const saveFeedback = (list = []) => {
+  feedbackCache = Array.isArray(list) ? list : [];
+  persistFeedback();
+  return loadFeedback();
+};
+
+export const addFeedback = ({ email, context, message, imageDataUrl }) => {
+  const entry = {
+    id: `fdbk_${Date.now()}`,
+    email: normalizeEmail(email),
+    createdAt: Date.now(),
+    context: context || "Other",
+    message: message || "",
+    imageDataUrl: imageDataUrl || null
+  };
+  feedbackCache = [entry, ...feedbackCache];
+  persistFeedback();
+  return entry;
+};
+
+export async function getDownloadUsage(rawEmail) {
+  const email = normalizeEmail(rawEmail);
+  if (!email) {
+    return { count: 0, limit: DEFAULT_DOWNLOAD_LIMIT };
+  }
+  const usageRef = doc(db, DOWNLOAD_USAGE_COLLECTION, email);
+  const snap = await getDoc(usageRef);
+  if (!snap.exists()) {
+    return { count: 0, limit: DEFAULT_DOWNLOAD_LIMIT };
+  }
+  const data = snap.data() || {};
+  return {
+    count: data.count || 0,
+    limit: data.limit || DEFAULT_DOWNLOAD_LIMIT
+  };
+}
+
+export async function incrementDownloadCount(rawEmail, limit = DEFAULT_DOWNLOAD_LIMIT) {
+  const email = normalizeEmail(rawEmail);
+  if (!email) {
+    return { allowed: false, count: 0, limit };
+  }
+  const usageRef = doc(db, DOWNLOAD_USAGE_COLLECTION, email);
+  return runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(usageRef);
+    const currentCount = snap.exists() ? snap.data().count || 0 : 0;
+    if (currentCount >= limit) {
+      return { allowed: false, count: currentCount, limit };
+    }
+    const nextCount = currentCount + 1;
+    transaction.set(
+      usageRef,
+      {
+        email,
+        count: nextCount,
+        limit,
+        updatedAt: Date.now()
+      },
+      { merge: true }
+    );
+    return { allowed: true, count: nextCount, limit };
+  });
+}
