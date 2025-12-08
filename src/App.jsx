@@ -5,7 +5,7 @@ import BetaFeedbackModal from "./components/BetaFeedbackModal";
 import FeedbackModal from "./components/FeedbackModal";
 import { isAdminEmail, getDownloadUsage, incrementDownloadCount } from "./auth/betaAccess";
 import { loadProjectsForUser, saveProjectForUser, deleteProjectForUser } from "./auth/projectStore";
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { 
   LayoutGrid, PlusCircle, FolderOpen, Trash2, 
   Globe, Building, Save, X, Copy, Pencil, DoorClosed, 
@@ -14,7 +14,7 @@ import {
   Menu, ChevronDown, Search, Info, Flame, Accessibility, RotateCcw,
   Eye, Layers, UserCircle, History, Box, Download, Library, MoveHorizontal,
   Lock, Settings, MousePointer, Power, Printer, FileText, Volume2, Scale,
-  BookOpen, UploadCloud, Wand2, ShieldCheck, Wrench, RefreshCw, Zap
+  BookOpen, UploadCloud, Wand2, ShieldCheck, Wrench, RefreshCw, Zap, MessageSquare
 } from 'lucide-react';
 
 // --- UTILS ---
@@ -63,7 +63,7 @@ const FACILITY_DATA = {
 const ACOUSTIC_RECOMMENDATIONS = {
     "Meeting Room": 40, "Director Cabin": 40, "Conference Room": 45, "Patient Room": 35,
     "Consultation / Exam": 40, "Classroom": 35, "Music Room": 50, "Prayer / Quiet Room": 45,
-    "Server / IT": 40, "Guest Room Entry": 35, "Unit Entrance (Fire Rated)": 35, "Restroom": 30
+    "Server / IT": 40, "Guest Room Entry": 42, "Unit Entrance (Fire Rated)": 35, "Restroom": 30
 };
 
 const DOOR_MATERIALS = ["Timber", "Metal", "Glass", "Aluminum"];
@@ -135,12 +135,12 @@ const INSIGHT_CARDS = [
   {
     label: "Live Insights",
     title: "Compliance Pulse",
-    body: "Provides real-time checks against commonly referenced safety and accessibility criteria."
+    body: "Provides real-time checks against commonly referenced safety and accessibility criteria. Specify with confidence."
   },
   {
     label: "Adaptive Visuals",
     title: "Material Intelligence",
-    body: "Switch Timber -> Glass -> Aluminum and see hinge, lock, and seal graphics update instantly before specifying."
+    body: "Switch between door materials from Timber → Glass → Aluminum and see hardware visuals transform in real-time."
   }
 ];
 
@@ -255,6 +255,7 @@ const PRODUCT_CATALOG = {
     types: [
       { name: "Mortise Lock", styles: ["Sashlock", "Deadlock", "Latch", "Bathroom Lock", "Nightlatch"] },
       { name: "Cylindrical Lock", styles: ["Leverset", "Knobset", "Interconnected"] },
+      { name: "Hotel Lock", styles: ["RFID Mortise", "Mobile Key"] },
       { name: "Panic Bar", styles: ["Rim Type", "Surface Vertical Rod", "Concealed Vertical Rod", "Mortise Type"] },
       { name: "Electric Strike", styles: ["Fail Safe", "Fail Secure"] },
       { name: "Magnetic Lock", styles: ["Surface Mount", "Shear Lock", "Recessed"] },
@@ -307,7 +308,8 @@ const PRODUCT_CATALOG = {
       csi: "08 71 00",
       types: [
           { name: "Kick Plate", styles: ["Satin Stainless", "Polished Stainless", "Brass"] },
-          { name: "Flush Bolt", styles: ["Lever Action", "Slide Action"] }
+          { name: "Flush Bolt", styles: ["Lever Action", "Slide Action"] },
+          { name: "Door Viewer", styles: ["Wide Angle", "Electronic"] }
       ]
   },
   "Protecting": {
@@ -330,11 +332,11 @@ const PRODUCT_CATALOG = {
 };
 
 const LOCK_TYPE_RULES = {
-  Timber: ["Mortise Lock", "Cylindrical Lock", "Panic Bar", "Electric Strike", "Magnetic Lock"],
+  Timber: ["Mortise Lock", "Cylindrical Lock", "Hotel Lock", "Panic Bar", "Electric Strike", "Magnetic Lock"],
   Metal: ["Mortise Lock", "Panic Bar", "Electric Strike", "Magnetic Lock"],
   Aluminum: ["Mortise Lock", "Electric Strike", "Magnetic Lock"],
   Glass: ["Patch Lock", "Panic Bar", "Magnetic Lock"],
-  default: ["Mortise Lock", "Cylindrical Lock", "Panic Bar", "Electric Strike", "Magnetic Lock"]
+  default: ["Mortise Lock", "Cylindrical Lock", "Hotel Lock", "Panic Bar", "Electric Strike", "Magnetic Lock"]
 };
 
 const getAllowedLockTypesForMaterials = (materials = []) => {
@@ -371,7 +373,22 @@ const getAllowedElectrifiedTypesForMaterials = (materials = []) => {
 
 const ESCAPE_ROUTE_KEYWORDS = ["stair", "exit", "corridor", "assembly", "classroom", "retail", "auditorium", "public", "egress"];
 const PANIC_REQUIRED_KEYWORDS = ["stair", "exit", "assembly", "auditorium", "arena", "stadium", "retail", "public"];
-const ELECTRIFIED_USE_HINTS = ["main entrance", "security", "server", "it", "data", "lab", "lobby", "reception", "turnstile", "access", "checkpoint"];
+const ELECTRIFIED_USE_HINTS = [
+  "main entrance",
+  "security",
+  "server",
+  "it",
+  "data",
+  "lab",
+  "lobby",
+  "reception",
+  "turnstile",
+  "access",
+  "checkpoint",
+  "guest room",
+  "guestroom",
+  "hotel"
+];
 
 const HARDWARE_PACKAGE_OPTIONS = [
   { id: "Mechanical", label: "Mechanical Package", desc: "Mortise/cylindrical locks, manual key control, free-egress lever trim." },
@@ -742,6 +759,10 @@ const INSTANT_SCHEDULE_RULES = {
         width: 950,
         height: 2150,
         material: "Timber",
+        fire: 30,
+        ada: true,
+        hardwareIntent: "Electromechanical",
+        stc: 42,
         notes: "Smart-lock ready leaf"
       });
     }
@@ -761,14 +782,17 @@ const INSTANT_SCHEDULE_RULES = {
       use: "Corridor / Circulation",
       qty: floors * 2,
       width: 1000,
-      height: 2150
+      height: 2150,
+      fire: 60,
+      ada: true
     });
     doors.push({
       roomName: "Restroom Core",
       use: "Restroom",
       qty: floors * 2,
       width: 900,
-      height: 2100
+      height: 2100,
+      ada: true
     });
     doors.push({
       roomName: "Stair / Exit",
@@ -892,7 +916,8 @@ const getSetWarnings = (set, profile) => {
   const panicDevices = locks.filter((i) => (i.type || "").toLowerCase().includes("panic"));
   const magLocks = [...locks, ...electrified].filter((i) => (i.type || "").toLowerCase().includes("magnetic"));
   const electricStrikes = [...locks, ...electrified].filter((i) => (i.type || "").toLowerCase().includes("electric strike"));
-  const hasTrueElectrified = magLocks.length > 0 || electrified.some((i) => !MAGLOCK_SUPPORT_TYPES.includes(i.type));
+  const hasHotelLock = locks.some((i) => (i.type || "").toLowerCase().includes("hotel lock"));
+  const hasTrueElectrified = hasHotelLock || magLocks.length > 0 || electrified.some((i) => !MAGLOCK_SUPPORT_TYPES.includes(i.type));
 
   if (profile.requiresPanic && panicDevices.length === 0) {
     warnings.push("Panic hardware is required for this escape route door (EN 1125 / NFPA 101).");
@@ -1536,10 +1561,13 @@ const DoorPreview = ({ door, hardwareSet }) => {
   const isDouble = door.config === 'Double';
   const isFireRatedDoor = parseInt(door.fire, 10) > 0;
   const requiresRebatedMeeting = isDouble && isFireRatedDoor;
-  const isGlass = door.material === 'Glass';
-  const isAluminum = door.material === 'Aluminum';
-  const isMetal = door.material === 'Metal';
-  const isTimber = door.material === 'Timber';
+  const hospitalityGuestDoor = ((door.use || door.roomName || "").toLowerCase().includes("guest room"));
+  const baseMaterial = door.material || "Timber";
+  const displayMaterial = hospitalityGuestDoor ? "Timber" : baseMaterial;
+  const isGlass = displayMaterial === 'Glass';
+  const isAluminum = displayMaterial === 'Aluminum';
+  const isMetal = displayMaterial === 'Metal';
+  const isTimber = displayMaterial === 'Timber';
   const hasVision = door.visionPanel;
   
   let doorFill = '#d6a15c';
@@ -2069,7 +2097,8 @@ const LandingPage = ({
   isAdmin,
   onOpenAdmin,
   isAdminOpen,
-  onCloseAdmin
+  onCloseAdmin,
+  showNotice
 }) => {
   const { user, logout } = useAuth();
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -2110,7 +2139,7 @@ const LandingPage = ({
           </button>
         )}
         <button
-          onClick={() => alert('Product tour coming soon.')}
+          onClick={() => showNotice?.("Coming Soon", "Product tour coming soon.")}
           className="hidden sm:inline-flex px-4 py-2 rounded-full border border-white/10 text-sm font-semibold text-white/80 hover:bg-white/5 transition"
         >
           Product Tour
@@ -2148,7 +2177,7 @@ const LandingPage = ({
                 Start Configuring <ArrowRight className="w-5 h-5" />
               </button>
               <button
-                onClick={() => alert('Demo replay coming soon.')}
+                onClick={() => showNotice?.("Coming Soon", "Demo replay coming soon.")}
                 className="px-8 py-4 border border-white/20 rounded-xl font-semibold text-lg text-white/80 hover:bg-white/10 transition flex items-center justify-center gap-2"
               >
                 View Demo
@@ -2285,10 +2314,11 @@ const LandingPage = ({
       >
         Techarix
       </a>
-    </footer>
+      </footer>
           <BetaAuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
+        onSuccess={onStart}
       />
       {isAdmin && (
         <BetaAdminPanel
@@ -2300,7 +2330,6 @@ const LandingPage = ({
   </div>
 );
 };
-
 const App = () => {
   const { user, logout } = useAuth();
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -2310,6 +2339,8 @@ const App = () => {
   const isAdmin = user ? isAdminEmail(user.email) : false;
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [remainingLabel, setRemainingLabel] = useState("");
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const mobileNavRef = useRef(null);
 
   // State
   const [view, setView] = useState('landing');
@@ -2322,9 +2353,102 @@ const App = () => {
   const [printMode, setPrintMode] = useState(false);
   const [exportStatus, setExportStatus] = useState('');
   const [lockResetSignals, setLockResetSignals] = useState({});
+  const lockResetTimers = useRef({});
   const [downloadWarning, setDownloadWarning] = useState("");
   const DOWNLOAD_LIMIT = 10;
   const [downloadUsage, setDownloadUsage] = useState({ count: 0, limit: DOWNLOAD_LIMIT });
+  const [promptConfig, setPromptConfig] = useState(null);
+  const promptResolverRef = useRef(null);
+
+  const openPrompt = useCallback((config = {}) => {
+    return new Promise((resolve) => {
+      promptResolverRef.current = resolve;
+      setPromptConfig({
+        title: "Please Confirm",
+        message: "",
+        confirmLabel: config.showCancel === false ? "OK" : "Continue",
+        cancelLabel: "Cancel",
+        showCancel: config.showCancel !== false,
+        tone: "default",
+        ...config
+      });
+    });
+  }, []);
+
+  const handlePromptClose = useCallback((result) => {
+    if (promptResolverRef.current) {
+      promptResolverRef.current(result);
+      promptResolverRef.current = null;
+    }
+    setPromptConfig(null);
+  }, []);
+
+  const showSaveConfirmation = useCallback(() => {
+    openPrompt({
+      title: "Project saved locally.",
+      message: "Thanks for helping us test InstaSpec!",
+      showCancel: false,
+      confirmLabel: "Close"
+    });
+  }, [openPrompt]);
+
+  const showNotice = useCallback((title, message, confirmLabel = "Close") => {
+    return openPrompt({
+      title,
+      message,
+      showCancel: false,
+      confirmLabel
+    });
+  }, [openPrompt]);
+  const triggerLockResetSignal = useCallback((key) => {
+    setLockResetSignals((prev) => ({ ...prev, [key]: true }));
+    if (lockResetTimers.current[key]) {
+      clearTimeout(lockResetTimers.current[key]);
+    }
+    lockResetTimers.current[key] = setTimeout(() => {
+      setLockResetSignals((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      delete lockResetTimers.current[key];
+    }, 4000);
+  }, []);
+
+  const promptPortal = promptConfig ? (
+    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
+      <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
+        {promptConfig.title && (
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">{promptConfig.title}</h3>
+        )}
+        {promptConfig.message && (
+          <p className="text-sm text-gray-600 whitespace-pre-line">{promptConfig.message}</p>
+        )}
+        <div className="mt-6 flex justify-end gap-3">
+          {promptConfig.showCancel && (
+            <button
+              type="button"
+              onClick={() => handlePromptClose(false)}
+              className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              {promptConfig.cancelLabel || "Cancel"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => handlePromptClose(true)}
+            className={`rounded-lg px-4 py-2 text-sm font-semibold text-white ${
+              promptConfig.tone === "danger"
+                ? "bg-red-600 hover:bg-red-700"
+                : "bg-indigo-600 hover:bg-indigo-700"
+            }`}
+          >
+            {promptConfig.confirmLabel || "OK"}
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
   
   // Door Modal State (Hierarchical Location)
   const [doorForm, setDoorForm] = useState({
@@ -2358,6 +2482,17 @@ const App = () => {
   const isBetaUser = Boolean(user && (user.plan === "beta_tester" || user.plan === "beta_admin"));
   const downloadCount =
     !user || user.plan === "beta_admin" ? null : downloadUsage.count;
+
+  useEffect(() => {
+    if (!isMobileNavOpen) return undefined;
+    const handleClick = (event) => {
+      if (mobileNavRef.current && !mobileNavRef.current.contains(event.target)) {
+        setIsMobileNavOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [isMobileNavOpen]);
 
   // Load projects when user changes (per-user storage)
   useEffect(() => {
@@ -2515,7 +2650,13 @@ const App = () => {
 
   const deleteProject = async (id, e) => {
     e.stopPropagation();
-    if (!window.confirm("Are you sure you want to delete this project?")) return;
+    const confirmed = await openPrompt({
+      title: "Delete project?",
+      message: "Are you sure you want to delete this project?",
+      confirmLabel: "Delete",
+      tone: "danger"
+    });
+    if (!confirmed) return;
     try {
       await deleteProjectForUser(id);
       setProjects(projects.filter(p => p.id !== id));
@@ -2525,12 +2666,18 @@ const App = () => {
       }
     } catch (err) {
       console.error("Failed to delete project", err);
-      alert("Unable to delete project. Please try again.");
+      await showNotice("Something went wrong", "Unable to delete project. Please try again.");
     }
   };
   
   const resetApp = async () => {
-    if (!window.confirm("This will clear all data for this user. Are you sure?")) return;
+    const confirmed = await openPrompt({
+      title: "Reset workspace?",
+      message: "This will clear all data for this user. Are you sure?",
+      confirmLabel: "Reset",
+      tone: "danger"
+    });
+    if (!confirmed) return;
     if (!user?.email) {
       setProjects([]);
       setView("landing");
@@ -2567,16 +2714,20 @@ const App = () => {
     );
   };
 
-  const handleInstantScheduleClick = () => {
+  const handleInstantScheduleClick = async () => {
     const proj = getProj();
     if (!proj) return;
     const generated = generateInstantDoorSchedule(proj);
     if (!generated.length) {
-      alert("Add more Instant Door Scheduling info in Step 1 to auto-generate doors.");
+      await showNotice("Need more info", "Add more Instant Door Scheduling info in Step 1 to auto-generate doors.");
       return;
     }
     if (proj.doors.length > 0) {
-      const append = window.confirm("Append generated doors to your existing schedule?");
+      const append = await openPrompt({
+        title: "Append doors?",
+        message: "Append generated doors to your existing schedule?",
+        confirmLabel: "Append"
+      });
       if (!append) return;
     }
     setInstantDoorModal({ isOpen: true, doors: generated });
@@ -2883,7 +3034,12 @@ const App = () => {
 
   const exportData = async () => {
     setExportStatus('Generating...');
-    if (!window.confirm(REVIEW_NOTICE)) {
+    const acknowledged = await openPrompt({
+      title: "Review Notice",
+      message: REVIEW_NOTICE,
+      confirmLabel: "I Understand"
+    });
+    if (!acknowledged) {
       setExportStatus('');
       return;
     }
@@ -2951,14 +3107,19 @@ const App = () => {
       setSaveStatus('Exported!');
     } catch (error) {
       console.error("Export failed:", error);
-      alert("Failed to generate Excel file. Please check your internet connection (loading external engine).");
+      await showNotice("Export failed", "Failed to generate Excel file. Please check your internet connection (loading external engine).");
       setExportStatus('');
       setSaveStatus('Error');
     }
   };
 
-  const exportBIMData = () => {
-    if (!window.confirm(REVIEW_NOTICE)) return;
+  const exportBIMData = async () => {
+    const acknowledged = await openPrompt({
+      title: "Review Notice",
+      message: REVIEW_NOTICE,
+      confirmLabel: "I Understand"
+    });
+    if (!acknowledged) return;
     const p = getProj();
     const bimRows = p.doors.map(d => ({
         "Mark": d.mark,
@@ -2979,15 +3140,20 @@ const App = () => {
     downloadCSV(csvContent, `${p.name.replace(/\s+/g, '_')}_BIM_SharedParams.csv`);
   };
 
-  const handlePrint = () => {
-    if (window.confirm(REVIEW_NOTICE)) {
+  const handlePrint = async () => {
+    const acknowledged = await openPrompt({
+      title: "Review Notice",
+      message: REVIEW_NOTICE,
+      confirmLabel: "I Understand"
+    });
+    if (acknowledged) {
       window.print();
     }
   };
 
   const handleDownloadWithLimit = async (action) => {
     if (!user) {
-      alert("Please log in to download documents.");
+      await showNotice("Sign in required", "Please log in to download documents.");
       return;
     }
     if (user.plan === "beta_admin") {
@@ -3000,7 +3166,7 @@ const App = () => {
         const message =
           "You’ve reached the 10-download limit for this beta. Please contact your InstaSpec admin to increase your download allowance.";
         setDownloadWarning(message);
-        alert(message);
+        await showNotice("Download limit", message);
         setDownloadUsage({ count: result.count, limit: result.limit });
         return;
       }
@@ -3009,12 +3175,12 @@ const App = () => {
       await Promise.resolve(action());
     } catch (err) {
       console.error("Failed to increment download usage", err);
-      alert("Unable to verify download limit. Please try again shortly.");
+      await showNotice("Download check failed", "Unable to verify download limit. Please try again shortly.");
     }
   };
 
   // Hardware Logic
-  const generateHardwareSets = () => {
+  const generateHardwareSets = async () => {
     const proj = getProj();
     const groups = {};
 
@@ -3035,6 +3201,9 @@ const App = () => {
       
       const setID = `HW-${String(idx + 1).padStart(2, '0')}`;
       const isDouble = config === 'Double';
+      const hospitalityQty = isDouble ? "2" : "1";
+      const normalizedUse = (use || "").toLowerCase();
+      const isGuestRoomEntry = normalizedUse.includes("guest room");
       let items = [];
       const addItem = (cat, ref, type, style, spec, qty) => {
         const finish = getDefaultFinishForCategory(cat, proj.standard);
@@ -3064,8 +3233,14 @@ const App = () => {
           const hingeType = proj.standard === "ANSI" ? "4.5x4.5" : "102x76x3";
           addItem("Hinges", "H01", "Butt Hinge", "Ball Bearing", `${hingeType}, SS`, totalHingeQty.toString());
           
-          if (use.toLowerCase().includes("stair")) {
+          if (normalizedUse.includes("stair")) {
               addItem("Locks", "L01", "Panic Bar", "Rim Type", activeLeafSpec("Fire Rated Exit Device"), "1");
+          } else if (isGuestRoomEntry) {
+              addItem("Locks", "L01", "Hotel Lock", "RFID Mortise", activeLeafSpec("Mobile key / RFID ready hotel lock"), "1");
+              addItem("Cylinders", "C01", "Cylinder", "Mortise Cylinder", activeLeafSpec("Emergency override cylinder"), hospitalityQty);
+              addItem("Handles", "H02", "Lever Handle", "Return to Door", "Interior privacy lever trim", "1 Pr");
+              addItem("Accessories", "A02", "Door Viewer", "Wide Angle", "180° guest room viewer", "1");
+              addItem("Accessories", "A03", "Kick Plate", "Satin Stainless", activeLeafSpec("Corridor protection plate"), hospitalityQty);
           } else {
               addItem("Locks", "L01", "Mortise Lock", "Sashlock", activeLeafSpec("Cylinder Function"), "1");
               addItem("Cylinders", "C01", "Cylinder", "Euro Profile", activeLeafSpec("Key/Turn"), "1");
@@ -3088,7 +3263,11 @@ const App = () => {
       }
 
       if (packageIntent === 'Electromechanical') {
-          addItem("Electrified", "E01", "Electric Strike", fire > 0 ? "Fail-Safe" : "Fail-Secure", activeLeafSpec("Access control interface"), "1");
+          if (isGuestRoomEntry) {
+              addItem("Electrified", "E02", "Door Contact", "Surface", activeLeafSpec("Online monitoring contact"), hospitalityQty);
+          } else {
+              addItem("Electrified", "E01", "Electric Strike", fire > 0 ? "Fail-Safe" : "Fail-Secure", activeLeafSpec("Access control interface"), "1");
+          }
       }
 
       const operationPieces = [];
@@ -3123,7 +3302,12 @@ const App = () => {
     );
     setProjects(updatedProjects);
     setStep(2);
-    alert(REVIEW_NOTICE);
+    await openPrompt({
+      title: "Review Notice",
+      message: REVIEW_NOTICE,
+      confirmLabel: "I Understand",
+      showCancel: false
+    });
   };
 
   const updateSetItem = (setId, idx, field, val) => {
@@ -3150,7 +3334,7 @@ const App = () => {
   const saveSetToLibrary = (set) => {
       const newLibSet = { ...set, id: `LIB-${generateId()}`, name: `${set.name} (Template)` };
       setLibrary([...library, newLibSet]);
-      alert("Hardware Set saved to Global Library!");
+      showNotice("Library updated", "Hardware Set saved to Global Library!", "Great!");
   };
 
   const loadSetFromLibrary = (libSet) => {
@@ -3183,7 +3367,7 @@ const App = () => {
     const targetSet = proj.sets.find(s => s.id === addItemModal.setId);
     if (!targetSet) return;
     if (category === "Hinges" && targetSet.items.some(i => i.category === "Hinges")) {
-      alert("Only one hanging product can be specified per hardware set.");
+      showNotice("One at a time", "Only one hanging product can be specified per hardware set.");
       return;
     }
 
@@ -3215,12 +3399,12 @@ const App = () => {
     const proj = getProj();
     const template = proj?.doors.find(d => d.id === bulkModal.templateId);
     if (!proj || !template) {
-      alert("Select a template door.");
+      showNotice("Template needed", "Select a template door.");
       return;
     }
     const lines = bulkModal.locationsText.split('\n').map(l => l.trim()).filter(Boolean);
     if (!lines.length) {
-      alert("Provide at least one location.");
+      showNotice("Locations missing", "Provide at least one location.");
       return;
     }
     const parsed = lines.map(line => {
@@ -3307,13 +3491,19 @@ const App = () => {
 
   if (view === 'landing') {
      return (
-    <LandingPage
-      onStart={() => setView(projects.length > 0 ? 'dashboard' : 'wizard')}
-      hasProjects={projects.length > 0}
-      isAdmin={isAdmin}
-      onOpenAdmin={() => setIsAdminOpen(true)}
-      isAdminOpen={isAdminOpen}
-      onCloseAdmin={() => setIsAdminOpen(false)} /> );
+    <>
+      <LandingPage
+        onStart={() => setView('dashboard')}
+        hasProjects={projects.length > 0}
+        isAdmin={isAdmin}
+        onOpenAdmin={() => setIsAdminOpen(true)}
+        isAdminOpen={isAdminOpen}
+        onCloseAdmin={() => setIsAdminOpen(false)}
+        showNotice={showNotice}
+      />
+      {promptPortal}
+    </>
+  );
   }
 
   // --- PRINT MODE ---
@@ -3412,124 +3602,242 @@ const App = () => {
     <div className="min-h-screen flex flex-col bg-gray-50 text-gray-900 font-sans">
       {/* Global Header */}
       <header className="h-16 bg-white border-b border-gray-200 flex items-center px-4 md:px-8 sticky top-0 z-40">
+        <div className="w-full flex items-center gap-3">
+          {/* LEFT: Logo + home */}
+          <button
+            onClick={() => setView('landing')}
+            className="flex items-center gap-2 font-bold text-lg md:text-xl text-gray-900 focus:outline-none"
+          >
+            <DoorClosed className="text-indigo-600" />
+            <span>InstaSpec</span>
+            <span className="text-xs text-gray-400 font-normal ml-1">v1.1 Beta</span>
+          </button>
 
-  {/* LEFT: Logo + home */}
-  <button
-    onClick={() => setView('landing')}
-    className="flex items-center gap-2 font-bold text-lg md:text-xl text-gray-900 focus:outline-none"
-  >
-    <DoorClosed className="text-indigo-600" />
-    <span>InstaSpec</span>
-    <span className="text-xs text-gray-400 font-normal ml-1">v1.1 Beta</span>
-  </button>
+          {/* CENTER: Role + status (desktop) */}
+          {user && (
+            <div className="flex-1 hidden md:flex items-center justify-center gap-4">
+              {view === 'wizard' && (
+                <span className="hidden md:inline text-xs text-gray-400">
+                  {exportStatus || saveStatus}
+                </span>
+              )}
 
-  {/* CENTER: Role + status (only when logged in) */}
-  {user && (
-    <div className="flex-1 flex items-center justify-center gap-4">
-      {view === 'wizard' && (
-        <span className="hidden md:inline text-xs text-gray-400">
-          {exportStatus || saveStatus}
-        </span>
-      )}
-
-      <div className="flex items-center gap-2 bg-gray-100 rounded-lg px-2 py-1">
-        <UserCircle size={16} className="text-gray-500" />
-        <select
-          value={userRole}
-          onChange={(e) => setUserRole(e.target.value)}
-          className="bg-transparent border-none text-sm font-medium focus:ring-0 cursor-pointer"
-        >
-          <option value="Architect">Architect View</option>
-          <option value="Contractor" disabled>
-            Contractor View (Coming Soon)
-          </option>
-        </select>
-      </div>
-    </div>
-  )}
-
-  {/* RIGHT: Controls + user pill (only when logged in) */}
-  {user && (
-    <div className="flex items-center gap-3 ml-4">
-      {isBetaUser && (
-        <button
-          onClick={() => setIsFeedbackOpen(true)}
-          className="text-xs md:text-sm px-3 py-1.5 rounded-full border border-amber-200 text-amber-700 hover:bg-amber-50"
-        >
-          Send Feedback
-        </button>
-      )}
-      {isAdmin && (
-        <button
-          onClick={() => setIsAdminOpen(true)}
-          className="text-xs md:text-sm px-3 py-1.5 rounded-full border border-indigo-200
-                     text-indigo-600 hover:bg-indigo-50"
-        >
-          Beta Admin
-        </button>
-      )}
-      {/* Reset (dashboard only) */}
-      {view === 'dashboard' && projects.length > 0 && (
-        <button
-          onClick={resetApp}
-          className="text-gray-400 hover:text-red-500 text-sm flex items-center gap-1"
-          title="Clear All Data"
-        >
-          <RotateCcw size={16} />
-          <span className="hidden md:inline">Reset</span>
-        </button>
-      )}
-
-      {/* Dashboard button */}
-      <button
-        onClick={() => setView('dashboard')}
-        className="text-gray-500 hover:text-gray-900 flex items-center gap-2 text-sm md:text-base"
-      >
-        <LayoutGrid size={18} />
-        <span className="hidden md:inline">Dashboard</span>
-      </button>
-
-      {/* User pill + dropdown */}
-      <div className="relative">
-        <button
-          onClick={() => setShowUserMenu((prev) => !prev)}
-          className="px-3 py-1.5 rounded-full bg-indigo-600 text-white text-xs md:text-sm
-                     flex items-center gap-2 shadow-sm hover:bg-indigo-700 transition"
-        >
-          <span className="max-w-[140px] truncate">{user.email}</span>
-
-          {remainingLabel && (
-            <span
-              className="text-[10px] md:text-[11px] px-2 py-0.5 rounded-full
-                         bg-indigo-500/80 border border-white/20 whitespace-nowrap"
-            >
-              {remainingLabel}
-            </span>
+              <div className="flex items-center gap-2 bg-gray-100 rounded-lg px-2 py-1">
+                <UserCircle size={16} className="text-gray-500" />
+                <select
+                  value={userRole}
+                  onChange={(e) => setUserRole(e.target.value)}
+                  className="bg-transparent border-none text-sm font-medium focus:ring-0 cursor-pointer"
+                >
+                  <option value="Architect">Architect View</option>
+                  <option value="Contractor" disabled>
+                    Contractor View (Coming Soon)
+                  </option>
+                </select>
+              </div>
+            </div>
           )}
 
-          <ChevronDown size={12} className="opacity-80" />
-        </button>
+          {/* RIGHT: Desktop controls */}
+          {user && (
+            <div className="hidden md:flex items-center gap-3 ml-4">
+              {isBetaUser && (
+                <button
+                  onClick={() => setIsFeedbackOpen(true)}
+                  className="text-xs md:text-sm px-3 py-1.5 rounded-full border border-amber-200 text-amber-700 hover:bg-amber-50"
+                >
+                  Share Feedback
+                </button>
+              )}
+              {isAdmin && (
+                <button
+                  onClick={() => setIsAdminOpen(true)}
+                  className="text-xs md:text-sm px-3 py-1.5 rounded-full border border-indigo-200
+                             text-indigo-600 hover:bg-indigo-50"
+                >
+                  Beta Admin
+                </button>
+              )}
+              {/* Reset (dashboard only) */}
+              {view === 'dashboard' && projects.length > 0 && (
+                <button
+                  onClick={resetApp}
+                  className="text-gray-400 hover:text-red-500 text-sm flex items-center gap-1"
+                  title="Clear All Data"
+                >
+                  <RotateCcw size={16} />
+                  <span className="hidden md:inline">Reset</span>
+                </button>
+              )}
 
-        {showUserMenu && (
-          <div
-            className="absolute right-0 mt-2 w-40 bg-white rounded-xl shadow-lg
-                       ring-1 ring-black/5 py-1 text-sm animate-[fadeInUp_0.18s_ease-out] origin-top-right"
-          >
-            <button
-              onClick={() => {
-                logout();
-                setShowUserMenu(false);
-              }}
-              className="w-full text-left px-3 py-2 text-gray-700
-                         hover:bg-indigo-50 hover:text-indigo-700"
+              {/* Dashboard button */}
+              <button
+                onClick={() => setView('dashboard')}
+                className="text-gray-500 hover:text-gray-900 flex items-center gap-2 text-sm md:text-base"
+              >
+                <LayoutGrid size={18} />
+                <span className="hidden md:inline">Dashboard</span>
+              </button>
+
+              {/* User pill + dropdown */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowUserMenu((prev) => !prev)}
+                  className="px-3 py-1.5 rounded-full bg-indigo-600 text-white text-xs md:text-sm
+                             flex items-center gap-2 shadow-sm hover:bg-indigo-700 transition"
+                >
+                  <span className="max-w-[140px] truncate">{user.email}</span>
+
+                  {remainingLabel && (
+                    <span
+                      className="text-[10px] md:text-[11px] px-2 py-0.5 rounded-full
+                                 bg-indigo-500/80 border border-white/20 whitespace-nowrap"
+                    >
+                      {remainingLabel}
+                    </span>
+                  )}
+
+                  <ChevronDown size={12} className="opacity-80" />
+                </button>
+
+                {showUserMenu && (
+                  <div
+                    className="absolute right-0 mt-2 w-40 bg-white rounded-xl shadow-lg
+                               ring-1 ring-black/5 py-1 text-sm animate-[fadeInUp_0.18s_ease-out] origin-top-right"
+                  >
+                    <button
+                      onClick={() => {
+                        logout();
+                        setShowUserMenu(false);
+                      }}
+                      className="w-full text-left px-3 py-2 text-gray-700
+                                 hover:bg-indigo-50 hover:text-indigo-700"
+                    >
+                      Logout
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Mobile condensed menu */}
+          {user && (
+            <div
+              className="ml-auto md:hidden relative"
+              ref={mobileNavRef}
             >
-              Logout
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  )}
+              <button
+                type="button"
+                onClick={() => setIsMobileNavOpen((prev) => !prev)}
+                className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-700"
+              >
+                <UserCircle size={16} className="text-gray-500" />
+                <span>{userRole === "Architect" ? "Architect View" : "Contractor View"}</span>
+                <ChevronDown size={14} className={`transition-transform ${isMobileNavOpen ? "rotate-180" : ""}`} />
+              </button>
+              {isMobileNavOpen && (
+                <div className="absolute right-0 mt-3 w-64 rounded-2xl bg-white shadow-2xl ring-1 ring-black/5 py-3 z-50">
+                  <div className="px-4 pb-2">
+                    <p className="text-sm font-semibold text-gray-900 truncate">{user.email}</p>
+                    {remainingLabel && (
+                      <p className="text-xs text-gray-500 mt-0.5">{remainingLabel}</p>
+                    )}
+                  </div>
+                  <div className="border-t border-gray-100 my-2" />
+                  <div className="px-4 text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                    View Mode
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUserRole("Architect");
+                      setIsMobileNavOpen(false);
+                    }}
+                    className="w-full px-4 py-2 text-sm flex items-center justify-between text-gray-800 hover:bg-indigo-50"
+                  >
+                    <span>Architect View</span>
+                    {userRole === "Architect" && <Check size={14} className="text-indigo-600" />}
+                  </button>
+                  <button
+                    type="button"
+                    disabled
+                    className="w-full px-4 py-2 text-sm flex items-center justify-between text-gray-400 cursor-not-allowed"
+                  >
+                    <span>Contractor View</span>
+                    <span className="text-[10px] uppercase">Soon</span>
+                  </button>
+                  <div className="border-t border-gray-100 my-2" />
+                  <div className="px-4 text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                    Actions
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setView('dashboard');
+                      setIsMobileNavOpen(false);
+                    }}
+                    className="w-full px-4 py-2 text-sm text-left text-gray-800 hover:bg-indigo-50 flex items-center gap-2"
+                  >
+                    <LayoutGrid size={16} className="text-gray-400" />
+                    Dashboard
+                  </button>
+                  {isBetaUser && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsFeedbackOpen(true);
+                        setIsMobileNavOpen(false);
+                      }}
+                      className="w-full px-4 py-2 text-sm text-left text-gray-800 hover:bg-indigo-50 flex items-center gap-2"
+                    >
+                      <MessageSquare size={16} className="text-amber-500" />
+                      Send Feedback
+                    </button>
+                  )}
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAdminOpen(true);
+                        setIsMobileNavOpen(false);
+                      }}
+                      className="w-full px-4 py-2 text-sm text-left text-gray-800 hover:bg-indigo-50 flex items-center gap-2"
+                    >
+                      <ShieldCheck size={16} className="text-indigo-500" />
+                      Beta Admin
+                    </button>
+                  )}
+                  {view === 'dashboard' && projects.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        resetApp();
+                        setIsMobileNavOpen(false);
+                      }}
+                      className="w-full px-4 py-2 text-sm text-left text-gray-800 hover:bg-red-50 flex items-center gap-2"
+                    >
+                      <RotateCcw size={16} className="text-red-400" />
+                      Reset Workspace
+                    </button>
+                  )}
+                  <div className="border-t border-gray-100 my-2" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      logout();
+                      setIsMobileNavOpen(false);
+                    }}
+                    className="w-full px-4 py-2 text-sm text-left text-gray-800 hover:bg-indigo-50 flex items-center gap-2"
+                  >
+                    <Power size={16} className="text-gray-400" />
+                    Logout
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </header>
 
       {/* Project Context Bar */}
@@ -3544,7 +3852,7 @@ const App = () => {
             <button onClick={() => setShowAuditLog(!showAuditLog)} className="px-3 py-1.5 bg-white border border-gray-200 rounded hover:bg-gray-50 flex items-center gap-2 text-xs md:text-sm">
               <History size={16} /> History
             </button>
-            <button onClick={() => { saveProjectDetails(getProj().name, getProj().type, getProj().standard, getProj().details); alert("Saved locally"); }} className="px-3 py-1.5 bg-white border border-gray-200 rounded hover:bg-gray-50 flex items-center gap-2 text-xs md:text-sm">
+            <button onClick={() => { saveProjectDetails(getProj().name, getProj().type, getProj().standard, getProj().details); showSaveConfirmation(); }} className="px-3 py-1.5 bg-white border border-gray-200 rounded hover:bg-gray-50 flex items-center gap-2 text-xs md:text-sm">
               <Save size={16} /> Save
             </button>
             <button onClick={() => setView('dashboard')} className="px-3 py-1.5 bg-white border border-gray-200 rounded hover:bg-gray-50 flex items-center gap-2 text-xs md:text-sm">
@@ -3616,17 +3924,37 @@ const App = () => {
         {view === 'wizard' && getProj() && (
           <div>
             {/* Stepper */}
-            <div className="flex justify-center mb-6 md:mb-10 relative overflow-x-auto pb-2">
-              <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-gray-200 -z-10 hidden md:block w-full"></div>
-              <div className="flex gap-8 md:gap-16 min-w-max px-4">
-                {['Project Setup', 'Door Schedule', 'Hardware Sets', 'Validation & Review'].map((label, idx) => (
-                  <div key={idx} onClick={() => setStep(idx)} className="flex flex-col items-center gap-2 cursor-pointer group bg-gray-50 px-2 relative z-10">
-                    <div className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center font-bold border-2 transition-colors ${step === idx ? 'bg-indigo-600 border-indigo-600 text-white' : step > idx ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-gray-300 text-gray-400'}`}>
-                      {step > idx ? <Check size={16} /> : idx + 1}
+            <div className="mb-6 md:mb-10">
+              <div className="relative">
+                <div className="absolute top-1/2 left-4 right-4 h-0.5 bg-gray-200 -z-10 hidden md:block"></div>
+                <div className="flex flex-wrap justify-center gap-4 md:gap-16 px-2">
+                  {['Project Setup', 'Door Schedule', 'Hardware Sets', 'Validation & Review'].map((label, idx) => (
+                    <div
+                      key={idx}
+                      onClick={() => setStep(idx)}
+                      className="flex flex-col items-center gap-2 cursor-pointer group flex-1 min-w-[120px] max-w-[150px] md:max-w-none px-2 relative z-10"
+                    >
+                      <div
+                        className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center font-bold border-2 transition-colors ${
+                          step === idx
+                            ? 'bg-indigo-600 border-indigo-600 text-white'
+                            : step > idx
+                              ? 'bg-green-500 border-green-500 text-white'
+                              : 'bg-white border-gray-300 text-gray-400'
+                        }`}
+                      >
+                        {step > idx ? <Check size={16} /> : idx + 1}
+                      </div>
+                      <span
+                        className={`text-[10px] md:text-xs font-bold uppercase tracking-wider text-center ${
+                          step === idx ? 'text-indigo-600' : 'text-gray-400'
+                        }`}
+                      >
+                        {label}
+                      </span>
                     </div>
-                    <span className={`text-[10px] md:text-xs font-bold uppercase tracking-wider ${step === idx ? 'text-indigo-600' : 'text-gray-400'}`}>{label}</span>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -3858,7 +4186,7 @@ const App = () => {
                       onClick={() => {
                         const proj = getProj();
                         if (!proj?.doors.length) {
-                          alert("Add at least one door to use bulk assignment.");
+                          showNotice("Add a door first", "Add at least one door to use bulk assignment.");
                           return;
                         }
                         const firstId = proj.doors[0].id;
@@ -3884,7 +4212,7 @@ const App = () => {
                     <button onClick={() => openDoorModal()} className="mt-4 text-indigo-600 font-bold hover:underline">Click to add your first door</button>
                   </div>
                 ) : (
-                  <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                  <div className="overflow-x-auto border border-gray-200 rounded-lg hardware-scroll">
                     <table className="w-full table-clean min-w-[1000px]">
                       <thead>
                         <tr>
@@ -4081,7 +4409,7 @@ const App = () => {
 
                             <div className="flex-1">
                                 {/* Table Container */}
-                                <div className="border border-gray-200 rounded-lg overflow-hidden mb-4 overflow-x-auto">
+                                <div className="border border-gray-200 rounded-lg overflow-hidden mb-4 overflow-x-auto hardware-scroll">
                                 <div className="min-w-[900px]">
                                     <div className="grid grid-cols-[40px_80px_80px_160px_160px_120px_1.2fr_140px_80px_50px] bg-gray-50 border-b border-gray-200 px-4 py-3 text-xs font-bold text-gray-500 uppercase gap-3">
                                     <div></div><div>Ref</div><div>CSI</div><div>Product Type</div><div>Style</div><div>Finish</div><div>Specification</div><div>Acoustic</div><div>Qty</div><div></div>
@@ -4104,7 +4432,7 @@ const App = () => {
                                                     const baseFinishes = FINISHES[getProj().standard];
                                                     let typeOptions = catData?.types || [];
                                                     const signalKey = `${s.id}-${originalIndex}`;
-                                                    const warningActive = lockResetSignals[signalKey] && (Date.now() - lockResetSignals[signalKey] < 4000);
+                                                    const warningActive = Boolean(lockResetSignals[signalKey]);
                                                     let compatibilityMessage = warningActive ? "Lock type reset: previous lock not compatible with selected material." : null;
                                                     if (cat === 'Hinges') {
                                                         if (isGlassOnlySet) typeOptions = typeOptions.filter(t => t.name === 'Patch Fitting');
@@ -4127,34 +4455,21 @@ const App = () => {
                                                             }
                                                     }
                                                     if (cat === 'Locks') {
-                                                        const allowedLockNames = getAllowedLockTypesForMaterials(setMaterials);
-                                                        if (allowedLockNames.length > 0) {
-                                                            const filtered = typeOptions.filter(t => allowedLockNames.includes(t.name));
-                                                            if (filtered.length > 0) typeOptions = filtered;
-                                                        }
-                                                        const isAllowed = typeOptions.some(t => t.name === effectiveType);
-                                                        if (!isAllowed && typeOptions.length > 0) {
-                                                            const fallback = typeOptions[0].name;
-                                                            if (fallback && fallback !== effectiveType) {
-                                                                setTimeout(() => {
-                                                                    updateSetItem(s.id, originalIndex, 'type', fallback);
-                                                                    setLockResetSignals(prev => ({ ...prev, [signalKey]: Date.now() }));
-                                                                }, 0);
-                                                                effectiveType = fallback;
-                                                                compatibilityMessage = "Lock type reset: previous lock not compatible with selected material.";
-                                                            }
-                                                            }
-                                                    }
-                                                    if (cat === 'Locks') {
                                                         let allowed = getAllowedLockTypesForMaterials(setProfile.materials);
-                                                        if (setProfile.requiresPanic) allowed = isGlassOnlySet ? ["Patch Lock"] : ["Panic Bar"];
-                                                        else if (setProfile.isEscapeRoute) allowed = allowed.filter(name => !name.toLowerCase().includes('deadbolt'));
+                                                        if (setProfile.requiresPanic) {
+                                                            allowed = isGlassOnlySet ? ["Patch Lock"] : ["Panic Bar"];
+                                                        } else if (setProfile.isEscapeRoute) {
+                                                            allowed = allowed.filter(name => !name.toLowerCase().includes('deadbolt'));
+                                                        }
+                                                        if (!allowed.length) {
+                                                            allowed = typeOptions.map((t) => t.name);
+                                                        }
                                                         typeOptions = typeOptions.filter(t => allowed.includes(t.name));
                                                         if (!typeOptions.some(t => t.name === effectiveType) && typeOptions.length > 0) {
                                                             const fallback = typeOptions[0].name;
                                                             setTimeout(() => {
                                                                 updateSetItem(s.id, originalIndex, 'type', fallback);
-                                                                setLockResetSignals(prev => ({ ...prev, [signalKey]: Date.now() }));
+                                                                triggerLockResetSignal(signalKey);
                                                             }, 0);
                                                             effectiveType = fallback;
                                                             compatibilityMessage = "Lock type reset: previous lock not compatible with selected material/use.";
@@ -4182,7 +4497,7 @@ const App = () => {
                                                             const fallback = typeOptions[0].name;
                                                             setTimeout(() => {
                                                                 updateSetItem(s.id, originalIndex, 'type', fallback);
-                                                                setLockResetSignals(prev => ({ ...prev, [signalKey]: Date.now() }));
+                                                                triggerLockResetSignal(signalKey);
                                                             }, 0);
                                                             effectiveType = fallback;
                                                             compatibilityMessage = "Electrified option reset for compliance.";
@@ -4352,7 +4667,7 @@ const App = () => {
                           onClick={() => setIsReportFeedbackOpen(true)}
                           className="px-4 py-2 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 font-semibold flex items-center justify-center gap-2 shadow-sm text-sm"
                         >
-                          <AlertCircle size={18} /> Report feedback
+                          <AlertCircle size={18} /> Report an Error
                         </button>
                       )}
                   </div>
@@ -4894,6 +5209,7 @@ const App = () => {
         isOpen={isReportFeedbackOpen}
         onClose={() => setIsReportFeedbackOpen(false)}
       />
+      {promptPortal}
     </div>
   );
 };

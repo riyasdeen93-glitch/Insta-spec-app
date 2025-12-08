@@ -14,6 +14,7 @@ import {
 const STORAGE_KEYS = {
   loginLog: "instaspec:betaLoginLog",
   feedback: "instaspec:betaFeedback",
+  accessRequests: "instaspec:betaAccessRequests",
   usage: "instaspec:betaUsage"
 };
 
@@ -120,14 +121,21 @@ export async function deleteBetaUser(rawEmail) {
 }
 
 export async function validateBetaAccess(rawEmail, code) {
-  if (!rawEmail || !code) return false;
+  if (!rawEmail || !code) {
+    return { status: "missing", user: null };
+  }
   const email = normalizeEmail(rawEmail);
   const user = await getBetaUser(email);
-  if (!user) return false;
-  const now = Date.now();
-  const codeMatches = user.code === code;
-  const notExpired = !user.expiresAt || now <= user.expiresAt;
-  return codeMatches && notExpired ? user : false;
+  if (!user) {
+    return { status: "not_found", user: null };
+  }
+  if (user.code !== code) {
+    return { status: "invalid_code", user: null };
+  }
+  if (user.expiresAt && Date.now() > user.expiresAt) {
+    return { status: "expired", user: null };
+  }
+  return { status: "success", user };
 }
 
 export function isAdminEmail(rawEmail) {
@@ -170,6 +178,12 @@ export const recordSuccessfulLogin = (email, isAdmin) => {
   persistLoginLog();
 };
 
+export const hasLoggedInBefore = (rawEmail) => {
+  const email = normalizeEmail(rawEmail);
+  if (!email) return false;
+  return loginLogStore.some((entry) => entry.email === email);
+};
+
 const readFeedbackList = () => {
   const stored = readJSON(STORAGE_KEYS.feedback, []);
   if (!Array.isArray(stored)) return [];
@@ -207,6 +221,46 @@ export const addFeedback = ({ email, context, message, imageDataUrl }) => {
   feedbackCache = [entry, ...feedbackCache];
   persistFeedback();
   return entry;
+};
+
+const readAccessRequestList = () => {
+  const stored = readJSON(STORAGE_KEYS.accessRequests, []);
+  if (!Array.isArray(stored)) return [];
+  return stored.map((entry) => ({
+    id: entry?.id || `request_${Date.now()}`,
+    email: normalizeEmail(entry?.email || ""),
+    name: entry?.name || "",
+    organization: entry?.organization || "",
+    reason: entry?.reason || "",
+    createdAt: typeof entry?.createdAt === "number" ? entry.createdAt : Date.now()
+  }));
+};
+
+let accessRequestCache = readAccessRequestList();
+const persistAccessRequests = () =>
+  writeJSON(STORAGE_KEYS.accessRequests, accessRequestCache);
+
+export const loadAccessRequests = () =>
+  [...accessRequestCache].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+export const addAccessRequest = ({ email, name, organization, reason }) => {
+  const entry = {
+    id: `request_${Date.now()}`,
+    email: normalizeEmail(email),
+    name: name?.trim() || "",
+    organization: organization?.trim() || "",
+    reason: reason?.trim() || "",
+    createdAt: Date.now()
+  };
+  accessRequestCache = [entry, ...accessRequestCache];
+  persistAccessRequests();
+  return entry;
+};
+
+export const removeAccessRequest = (id) => {
+  if (!id) return;
+  accessRequestCache = accessRequestCache.filter((entry) => entry.id !== id);
+  persistAccessRequests();
 };
 
 export async function getDownloadUsage(rawEmail) {

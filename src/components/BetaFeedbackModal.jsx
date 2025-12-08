@@ -18,6 +18,7 @@ const BetaFeedbackModal = ({ isOpen, onClose }) => {
   const [imageDataUrl, setImageDataUrl] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [confirmation, setConfirmation] = useState("");
 
   useEffect(() => {
     if (!isOpen) {
@@ -26,6 +27,7 @@ const BetaFeedbackModal = ({ isOpen, onClose }) => {
       setImageDataUrl(null);
       setIsSubmitting(false);
       setError("");
+      setConfirmation("");
     }
   }, [isOpen]);
 
@@ -58,8 +60,7 @@ const BetaFeedbackModal = ({ isOpen, onClose }) => {
       imageDataUrl
     });
     setIsSubmitting(false);
-    onClose();
-    alert("Thanks for the feedback! We'll review it shortly.");
+    setConfirmation("Thank you! Your feedback just made InstaSpec smarter. We’re on it!");
   };
 
   return (
@@ -74,6 +75,23 @@ const BetaFeedbackModal = ({ isOpen, onClose }) => {
             Close
           </button>
         </div>
+        {confirmation ? (
+          <div className="space-y-4 py-8 text-center">
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-green-100 text-green-600 mx-auto">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <p className="text-lg font-semibold text-gray-900">{confirmation}</p>
+            <p className="text-sm text-gray-500">Got another idea? Keep them coming anytime.</p>
+            <button
+              onClick={onClose}
+              className="mt-4 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700"
+            >
+              Close
+            </button>
+          </div>
+        ) : (
         <form className="space-y-4" onSubmit={handleSubmit}>
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
@@ -160,6 +178,7 @@ const BetaFeedbackModal = ({ isOpen, onClose }) => {
             </button>
           </div>
         </form>
+        )}
       </div>
     </div>
   );

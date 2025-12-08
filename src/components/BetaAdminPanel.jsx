@@ -20,6 +20,8 @@ import {
   generateNewBetaCode,
   getLoginStats,
   loadFeedback,
+  loadAccessRequests,
+  removeAccessRequest,
   getDownloadUsage,
   MASTER_ADMIN_CODE
 } from "../auth/betaAccess";
@@ -42,6 +44,7 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
   const [betaUsers, setBetaUsers] = useState([]);
   const [loginStats, setLoginStatsState] = useState({ totalLogins: 0, recentLogins: [] });
   const [feedbackList, setFeedbackList] = useState([]);
+  const [accessRequests, setAccessRequests] = useState([]);
   const [activeFeedback, setActiveFeedback] = useState(null);
   const [emailInput, setEmailInput] = useState("");
   const [makeAdmin, setMakeAdmin] = useState(false);
@@ -68,6 +71,7 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
     setMakeAdmin(false);
     setActiveTab("access");
     refreshUsers();
+    refreshAccessRequests();
     refreshFeedback();
     return () => {
       if (statusTimeout.current) {
@@ -123,6 +127,10 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
 
   const refreshFeedback = () => {
     setFeedbackList(loadFeedback());
+  };
+
+  const refreshAccessRequests = () => {
+    setAccessRequests(loadAccessRequests());
   };
 
   const isValidEmail = (value) => /\S+@\S+\.\S+/.test(value || "");
@@ -225,6 +233,12 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
       console.error("Failed to delete user", err);
       showStatus("Unable to delete user.", "error");
     }
+  };
+
+  const handleArchiveRequest = (requestId) => {
+    removeAccessRequest(requestId);
+    refreshAccessRequests();
+    showStatus("Request archived.");
   };
 
   if (!isOpen) return null;
@@ -336,6 +350,55 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
                 <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 font-mono text-xs tracking-[0.2em] text-gray-900">
                   {import.meta.env.VITE_BETA_ACCESS_CODE || "NOT SET"}
                 </div>
+              </div>
+            </section>
+
+            <section className="mb-6">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800">Access Requests</h3>
+                  <p className="text-xs text-gray-500">Submitted from the beta login modal.</p>
+                </div>
+                <button
+                  onClick={refreshAccessRequests}
+                  className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-100 flex items-center gap-1"
+                >
+                  <RefreshCw size={12} /> Refresh
+                </button>
+              </div>
+              <div className="border border-gray-200 rounded-xl divide-y divide-gray-100 bg-white">
+                {accessRequests.length === 0 ? (
+                  <div className="p-4 text-xs text-gray-500 flex items-center gap-2">
+                    <AlertCircle size={16} /> No pending access requests.
+                  </div>
+                ) : (
+                  accessRequests.map((request) => (
+                    <div
+                      key={request.id}
+                      className="p-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between"
+                    >
+                      <div>
+                        <p className="text-sm font-semibold text-gray-900 break-all">{request.email}</p>
+                        <p className="text-xs text-gray-500">
+                          {(request.name || "Unnamed").trim() || "Unnamed"} •{" "}
+                          {request.organization || "No organization provided"}
+                        </p>
+                        {request.reason && (
+                          <p className="text-xs text-gray-700 mt-1 whitespace-pre-line">{request.reason}</p>
+                        )}
+                        <p className="text-[11px] text-gray-400 mt-1">
+                          {new Date(request.createdAt).toLocaleString()}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleArchiveRequest(request.id)}
+                        className="self-start md:self-auto px-3 py-1.5 text-xs font-semibold rounded-lg border border-green-200 text-green-700 hover:bg-green-50 flex items-center gap-1"
+                      >
+                        <CheckCircle2 size={12} /> Mark reviewed
+                      </button>
+                    </div>
+                  ))
+                )}
               </div>
             </section>
 
