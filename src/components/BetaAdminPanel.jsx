@@ -23,6 +23,8 @@ import {
   loadAccessRequests,
   removeAccessRequest,
   getDownloadUsage,
+  extendBetaUserExpiry,
+  extendDownloadLimit,
   MASTER_ADMIN_CODE
 } from "../auth/betaAccess";
 
@@ -39,6 +41,10 @@ const formatRelativeTime = (timestamp) => {
 };
 
 const DEFAULT_DOWNLOAD_LIMIT = 10;
+const DEFAULT_EXTENSION_INPUT = {
+  hours: "24",
+  downloads: "5"
+};
 
 const BetaAdminPanel = ({ isOpen, onClose }) => {
   const [betaUsers, setBetaUsers] = useState([]);
@@ -52,7 +58,22 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
   const [activeTab, setActiveTab] = useState("access");
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [usageMap, setUsageMap] = useState({});
+  const [extensionInputs, setExtensionInputs] = useState({});
+  const [actionLoading, setActionLoading] = useState({});
   const statusTimeout = useRef(null);
+
+  useEffect(() => {
+    if (!betaUsers.length) return;
+    setExtensionInputs((prev) => {
+      const next = { ...prev };
+      betaUsers.forEach((user) => {
+        if (!next[user.email]) {
+          next[user.email] = { ...DEFAULT_EXTENSION_INPUT };
+        }
+      });
+      return next;
+    });
+  }, [betaUsers]);
 
   const stats = useMemo(() => {
     const totalUsers = betaUsers.length;
@@ -70,6 +91,8 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
     setEmailInput("");
     setMakeAdmin(false);
     setActiveTab("access");
+    setExtensionInputs({});
+    setActionLoading({});
     refreshUsers();
     refreshAccessRequests();
     refreshFeedback();
@@ -88,6 +111,29 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
     statusTimeout.current = setTimeout(() => {
       setStatus((prev) => (prev?.key === key ? null : prev));
     }, 3500);
+  };
+
+  const getUsageFor = (email) => usageMap[email] || { count: 0, limit: DEFAULT_DOWNLOAD_LIMIT };
+
+  const getExtensionFieldValue = (email, field) =>
+    extensionInputs[email]?.[field] ?? DEFAULT_EXTENSION_INPUT[field];
+
+  const updateExtensionFieldValue = (email, field, value) => {
+    setExtensionInputs((prev) => ({
+      ...prev,
+      [email]: {
+        ...DEFAULT_EXTENSION_INPUT,
+        ...prev[email],
+        [field]: value
+      }
+    }));
+  };
+
+  const setActionBusy = (key, value) => {
+    setActionLoading((prev) => ({
+      ...prev,
+      [key]: value
+    }));
   };
 
   const refreshUsageForUsers = async (users) => {
@@ -232,6 +278,52 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
     } catch (err) {
       console.error("Failed to delete user", err);
       showStatus("Unable to delete user.", "error");
+    }
+  };
+
+  const handleExtendExpiry = async (user) => {
+    const key = `expiry:${user.email}`;
+    if (actionLoading[key]) return;
+    const hours = Number(getExtensionFieldValue(user.email, "hours"));
+    if (!Number.isFinite(hours) || hours <= 0) {
+      showStatus("Enter a positive number of hours.", "error");
+      return;
+    }
+    setActionBusy(key, true);
+    try {
+      const updated = await extendBetaUserExpiry(user.email, hours);
+      upsertLocalUser(updated);
+      showStatus(`Extended expiry for ${user.email} by ${hours}h.`);
+    } catch (err) {
+      console.error("Failed to extend expiry", err);
+      showStatus("Unable to extend expiry.", "error");
+    } finally {
+      setActionBusy(key, false);
+    }
+  };
+
+  const handleExtendDownloads = async (user) => {
+    if (user.isAdmin) return;
+    const key = `downloads:${user.email}`;
+    if (actionLoading[key]) return;
+    const increment = Number(getExtensionFieldValue(user.email, "downloads"));
+    if (!Number.isFinite(increment) || increment <= 0) {
+      showStatus("Enter a positive download amount.", "error");
+      return;
+    }
+    setActionBusy(key, true);
+    try {
+      const usage = await extendDownloadLimit(user.email, increment);
+      setUsageMap((prev) => ({
+        ...prev,
+        [user.email]: usage
+      }));
+      showStatus(`Added ${increment} downloads to ${user.email}.`);
+    } catch (err) {
+      console.error("Failed to extend download limit", err);
+      showStatus("Unable to extend download limit.", "error");
+    } finally {
+      setActionBusy(key, false);
     }
   };
 
@@ -451,62 +543,124 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
                     <AlertCircle size={16} /> No beta users yet.
                   </div>
                 ) : (
-                  betaUsers.map((user) => (
-                    <div
-                      key={user.email}
-                      className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="h-8 w-8 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                          <Mail size={16} />
-                        </div>
-                        <div>
-                          <p className="text-sm font-semibold text-gray-900 break-all">{user.email}</p>
-                          {user.isAdmin && (
-                            <span className="inline-flex items-center gap-1 text-xs text-indigo-600 font-semibold">
-                              <Crown size={12} /> Admin
-                            </span>
-                          )}
-                          <div className="text-xs text-gray-600 font-mono mt-1">
-                            Code: <span className="text-gray-900">{user.code || ""}</span>
+                  betaUsers.map((user) => {
+                    const usage = getUsageFor(user.email);
+                    const limitReached = !user.isAdmin && usage.count >= usage.limit;
+                    const limitWarning =
+                      !user.isAdmin && !limitReached && usage.count >= Math.max(0, usage.limit - 2);
+                    const downloadTone = user.isAdmin
+                      ? "text-gray-500"
+                      : limitReached
+                      ? "text-red-600 font-semibold"
+                      : limitWarning
+                      ? "text-orange-600"
+                      : "text-gray-500";
+                    const expiryActionKey = `expiry:${user.email}`;
+                    const downloadActionKey = `downloads:${user.email}`;
+                    return (
+                      <div
+                        key={user.email}
+                        className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="h-8 w-8 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                            <Mail size={16} />
                           </div>
-                          <div className="text-xs text-gray-500">
-                            Expires: {user.expiresAt ? new Date(user.expiresAt).toLocaleString() : "No expiry"}
+                          <div>
+                            <p className="text-sm font-semibold text-gray-900 break-all">{user.email}</p>
+                            {user.isAdmin && (
+                              <span className="inline-flex items-center gap-1 text-xs text-indigo-600 font-semibold">
+                                <Crown size={12} /> Admin
+                              </span>
+                            )}
+                            <div className="text-xs text-gray-600 font-mono mt-1">
+                              Code: <span className="text-gray-900">{user.code || ""}</span>
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              Expires: {user.expiresAt ? new Date(user.expiresAt).toLocaleString() : "No expiry"}
+                            </div>
+                            <div className={`text-xs mt-1 ${downloadTone}`}>
+                              Downloads:{" "}
+                              {user.isAdmin ? "Unlimited" : `${usage.count} / ${usage.limit}`}
+                            </div>
+                            <div className="mt-3 space-y-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-[11px] font-semibold text-gray-600 uppercase">Extend expiry</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={getExtensionFieldValue(user.email, "hours")}
+                                  onChange={(e) => updateExtensionFieldValue(user.email, "hours", e.target.value)}
+                                  placeholder={DEFAULT_EXTENSION_INPUT.hours}
+                                  className="w-20 rounded border border-gray-300 px-2 py-1 text-xs text-gray-900 font-semibold"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleExtendExpiry(user)}
+                                  disabled={actionLoading[expiryActionKey]}
+                                  className="px-3 py-1 text-xs font-semibold rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 disabled:opacity-60"
+                                >
+                                  {actionLoading[expiryActionKey] ? "Extending..." : "+ Hours"}
+                                </button>
+                              </div>
+                              {!user.isAdmin && (
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-[11px] font-semibold text-gray-600 uppercase">
+                                    Extend downloads
+                                  </span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    value={getExtensionFieldValue(user.email, "downloads")}
+                                    onChange={(e) =>
+                                      updateExtensionFieldValue(user.email, "downloads", e.target.value)
+                                    }
+                                    placeholder={DEFAULT_EXTENSION_INPUT.downloads}
+                                    className="w-20 rounded border border-gray-300 px-2 py-1 text-xs text-gray-900 font-semibold"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleExtendDownloads(user)}
+                                    disabled={actionLoading[downloadActionKey]}
+                                    className="px-3 py-1 text-xs font-semibold rounded-lg border border-green-200 text-green-700 hover:bg-green-50 disabled:opacity-60"
+                                  >
+                                    {actionLoading[downloadActionKey] ? "Updating..." : "+ Downloads"}
+                                  </button>
+                                  {limitReached && (
+                                    <span className="text-[11px] font-semibold text-red-600">Limit reached</span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        <div className="text-xs text-gray-500">
-                          Downloads:{" "}
-                          {user.isAdmin
-                            ? "Unlimited"
-                            : `${usageMap[user.email]?.count ?? 0} / ${usageMap[user.email]?.limit ?? DEFAULT_DOWNLOAD_LIMIT}`}
                         </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <button
+                            onClick={() => handleRegenerateCode(user)}
+                            className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-100 flex items-center gap-1"
+                          >
+                            <RotateCcw size={12} /> Regenerate code
+                          </button>
+                          <button
+                            onClick={() => handleToggleAdmin(user)}
+                            className={`px-3 py-1.5 text-xs font-semibold rounded-lg border flex items-center gap-1 ${
+                              user.isAdmin
+                                ? "text-gray-600 border-gray-200 hover:bg-gray-100"
+                                : "text-indigo-600 border-indigo-200 hover:bg-indigo-50"
+                            }`}
+                          >
+                            <Crown size={12} /> {user.isAdmin ? "Remove admin" : "Promote to admin"}
+                          </button>
+                          <button
+                            onClick={() => handleRemoveUser(user)}
+                            className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-red-200 text-red-600 hover:bg-red-50 flex items-center gap-1"
+                          >
+                            <Trash2 size={12} /> Remove
+                          </button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <button
-                          onClick={() => handleRegenerateCode(user)}
-                          className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-100 flex items-center gap-1"
-                        >
-                          <RotateCcw size={12} /> Regenerate code
-                        </button>
-                        <button
-                          onClick={() => handleToggleAdmin(user)}
-                          className={`px-3 py-1.5 text-xs font-semibold rounded-lg border flex items-center gap-1 ${
-                            user.isAdmin
-                              ? "text-gray-600 border-gray-200 hover:bg-gray-100"
-                              : "text-indigo-600 border-indigo-200 hover:bg-indigo-50"
-                          }`}
-                        >
-                          <Crown size={12} /> {user.isAdmin ? "Remove admin" : "Promote to admin"}
-                        </button>
-                        <button
-                          onClick={() => handleRemoveUser(user)}
-                          className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-red-200 text-red-600 hover:bg-red-50 flex items-center gap-1"
-                        >
-                          <Trash2 size={12} /> Remove
-                        </button>
-                      </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </section>

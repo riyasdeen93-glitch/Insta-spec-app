@@ -150,6 +150,8 @@ const WORKFLOW_STEPS_CONTENT = [
   { title: "Hardware Sets", body: "Door Hardware Layout Preview shows hinges, closers, maglocks, and panic trim before specification." },
   { title: "Validation & Review", body: "Compliance Pulse verifies life-safety, then exports BIM, PDF, and Excel packages in one click." }
 ];
+const WIZARD_STEPS = ["Project Setup", "Door Schedule", "Hardware Sets", "Validation & Review"];
+const WIZARD_SHORT_LABELS = ["SETUP", "SCHEDULE", "PREVIEW", "GENERATE"];
 const WHY_INSTASPEC_CARDS = [
   {
     title: "Compliance Support",
@@ -1345,7 +1347,13 @@ const normalizeProject = (project) => {
   Object.keys(defaults).forEach((typeKey) => {
     mergedInstant[typeKey] = { ...defaults[typeKey], ...(mergedInstant[typeKey] || {}) };
   });
-  return { ...project, doors: normalizedDoors, sets: normalizedSets, instantInputs: mergedInstant };
+  return {
+    ...project,
+    doors: normalizedDoors,
+    sets: normalizedSets,
+    instantInputs: mergedInstant,
+    instantSchedulingEnabled: Boolean(project.instantSchedulingEnabled)
+  };
 };
 
 // --- CUSTOM UI COMPONENTS ---
@@ -2359,6 +2367,8 @@ const App = () => {
   const [downloadUsage, setDownloadUsage] = useState({ count: 0, limit: DOWNLOAD_LIMIT });
   const [promptConfig, setPromptConfig] = useState(null);
   const promptResolverRef = useRef(null);
+  const [isMobileDownloadOpen, setIsMobileDownloadOpen] = useState(false);
+  const [blockedStep, setBlockedStep] = useState(null);
 
   const openPrompt = useCallback((config = {}) => {
     return new Promise((resolve) => {
@@ -2374,6 +2384,7 @@ const App = () => {
       });
     });
   }, []);
+
 
   const handlePromptClose = useCallback((result) => {
     if (promptResolverRef.current) {
@@ -2608,6 +2619,61 @@ const App = () => {
 
   const getProj = () => projects.find(p => p.id === currentId);
 
+  const isStepComplete = useCallback(
+    (idx) => {
+      const proj = getProj();
+      if (!proj) return false;
+      switch (idx) {
+        case 0:
+          return Boolean(proj.name?.trim()) && Boolean(proj.details?.client?.trim()) && Boolean(proj.details?.architect?.trim());
+        case 1:
+          return Array.isArray(proj.doors) && proj.doors.length > 0;
+        case 2:
+          return Array.isArray(proj.sets) && proj.sets.length > 0;
+        case 3:
+          return Array.isArray(proj.sets) && proj.sets.length > 0;
+        default:
+          return false;
+      }
+    },
+    [projects, currentId]
+  );
+
+  const canAccessStep = useCallback(
+    (target) => {
+      if (target == null) return true;
+      if (target <= 0) return true;
+      for (let i = 0; i < target; i += 1) {
+        if (!isStepComplete(i)) return false;
+      }
+      return true;
+    },
+    [isStepComplete]
+  );
+
+  const handleStepChange = useCallback(
+    (target) => {
+      if (typeof target !== "number" || target === step) return;
+      if (target > step && !canAccessStep(target)) {
+        setBlockedStep(target);
+        const prevLabel = WIZARD_STEPS[target - 1] || "previous step";
+        const targetLabel = WIZARD_STEPS[target] || "next step";
+        const title = target === 1 ? "Finish Setup to Continue" : "Finish previous step";
+        showNotice(title, `Complete ${prevLabel} before moving to ${targetLabel}.`);
+        return;
+      }
+      setBlockedStep(null);
+      setStep(target);
+    },
+    [step, canAccessStep, showNotice]
+  );
+
+  useEffect(() => {
+    if (blockedStep !== null && canAccessStep(blockedStep)) {
+      setBlockedStep(null);
+    }
+  }, [blockedStep, canAccessStep]);
+
   // --- ACTIONS ---
 
   const addToAuditLog = (projId, action) => {
@@ -2636,7 +2702,8 @@ const App = () => {
       doors: [],
       sets: [],
       auditLog: [],
-      instantInputs: cloneInstantInputs()
+      instantInputs: cloneInstantInputs(),
+      instantSchedulingEnabled: false
     };
     setProjects([...projects, newProj]);
     loadProject(id);
@@ -2644,6 +2711,7 @@ const App = () => {
 
   const loadProject = (id) => {
     setCurrentId(id);
+    setBlockedStep(null);
     setStep(0);
     setView('wizard');
   };
@@ -2690,6 +2758,9 @@ const App = () => {
       console.error("Failed to reset projects", err);
     }
     setProjects([]);
+    setCurrentId(null);
+    setBlockedStep(null);
+    setStep(0);
     setView("landing");
   };
 
@@ -2714,9 +2785,19 @@ const App = () => {
     );
   };
 
+  const setInstantSchedulingEnabled = (enabled) => {
+    setProjects((prev) =>
+      prev.map((p) => (p.id === currentId ? { ...p, instantSchedulingEnabled: Boolean(enabled) } : p))
+    );
+  };
+
   const handleInstantScheduleClick = async () => {
     const proj = getProj();
     if (!proj) return;
+    if (!proj.instantSchedulingEnabled) {
+      await showNotice("Enable Instant Scheduling", "Turn on Instant Door Scheduling in Step 1 to generate starter doors.");
+      return;
+    }
     const generated = generateInstantDoorSchedule(proj);
     if (!generated.length) {
       await showNotice("Need more info", "Add more Instant Door Scheduling info in Step 1 to auto-generate doors.");
@@ -2754,13 +2835,16 @@ const App = () => {
     );
     setProjects(updatedProjects);
     addToAuditLog(currentId, `Updated project details: ${name}`);
-    setStep(1);
     if (user?.email) {
       const current = updatedProjects.find((p) => p.id === currentId);
       if (current) {
         await saveProjectForUser(user.email, current);
       }
     }
+  };
+
+  const openPrintPreview = () => {
+    setPrintMode(true);
   };
 
   const saveDoor = async () => {
@@ -3301,7 +3385,7 @@ const App = () => {
       p.id === currentId ? { ...p, sets: newSets } : p
     );
     setProjects(updatedProjects);
-    setStep(2);
+    handleStepChange(2);
     await openPrompt({
       title: "Review Notice",
       message: REVIEW_NOTICE,
@@ -3508,94 +3592,117 @@ const App = () => {
 
   // --- PRINT MODE ---
   if (printMode) {
-      return (
-          <div className="bg-white min-h-screen text-black p-8 font-serif">
-              <div className="flex justify-between items-center mb-8 border-b-2 border-black pb-4">
-                  <div>
-                      <h1 className="text-3xl font-bold uppercase tracking-wider">{getProj().name?.trim() || "New Project"}</h1>
-                      <p className="text-sm">Architectural Door Hardware Schedule</p>
-                  </div>
-                  <div className="text-right text-sm">
-                      <p><strong>Client:</strong> {getProj().details?.client || "N/A"}</p>
-                      <p><strong>Architect:</strong> {getProj().details?.architect || "N/A"}</p>
-                      <p><strong>Date:</strong> {new Date().toLocaleDateString()}</p>
-                  </div>
-              </div>
-
-              {getProj().sets.map(s => {
-                  const repDoor = getProj().doors.find(d => s.doors.includes(d.id));
-                  return (
-                      <div key={s.id} className="mb-10 break-inside-avoid">
-                          <div className="flex justify-between items-end border-b border-black mb-2 pb-1">
-                              <h2 className="text-xl font-bold">{s.id}: {s.name}</h2>
-                              <span className="text-sm font-mono">
-                                {repDoor ? `${repDoor.fire > 0 ? `FD${repDoor.fire}` : 'NFR'} | ${repDoor.material} | ${repDoor.config}` : ''}
-                              </span>
-                          </div>
-                          <div className="mb-4 text-sm italic text-gray-700">{s.operation}</div>
-                          
-                          <table className="w-full text-sm border-collapse">
-                              <thead>
-                                  <tr className="bg-gray-100 border-b border-gray-400">
-                                      <th className="text-left p-2">Category</th>
-                                      <th className="text-left p-2">Item</th>
-                                      <th className="text-left p-2">Description</th>
-                                      <th className="text-left p-2">Finish</th>
-                                      <th className="text-left p-2">Acoustic</th>
-                                      <th className="text-center p-2">Qty</th>
-                                  </tr>
-                              </thead>
-                              <tbody>
-                                  {Object.keys(BHMA_CATEGORIES).map(catGroup => {
-                                      const itemsInGroup = s.items.filter(i => BHMA_CATEGORIES[catGroup].includes(i.category));
-                                      if (itemsInGroup.length === 0) return null;
-                                      return (
-                                          <React.Fragment key={catGroup}>
-                                              <tr className="bg-gray-50"><td colSpan="6" className="p-1 pl-2 font-bold text-xs uppercase text-gray-500 border-b">{catGroup}</td></tr>
-                                              {itemsInGroup.map((item, i) => (
-                                                  <tr key={i} className="border-b border-gray-200">
-                                                      <td className="p-2 text-xs text-gray-400">{item.category}</td>
-                                                      <td className="p-2 font-bold">{item.type}</td>
-                                                      <td className="p-2">{item.style} - {item.spec}</td>
-                                                      <td className="p-2">{item.finish}</td>
-                                                      <td className="p-2">{item.acousticContribution || ''}</td>
-                                                      <td className="text-center p-2">{item.qty}</td>
-                                                  </tr>
-                                              ))}
-                                          </React.Fragment>
-                                      );
-                                  })}
-                                  {/* Catch-all for uncategorized */}
-                                  {s.items.filter(i => !Object.values(BHMA_CATEGORIES).flat().includes(i.category)).map((item, i) => (
-                                      <tr key={'other-'+i} className="border-b border-gray-200">
-                                          <td className="p-2 text-xs text-gray-400">{item.category}</td>
-                                          <td className="p-2 font-bold">{item.type}</td>
-                                          <td className="p-2">{item.style} - {item.spec}</td>
-                                          <td className="p-2">{item.finish}</td>
-                                          <td className="p-2">{item.acousticContribution || ''}</td>
-                                          <td className="text-center p-2">{item.qty}</td>
-                                      </tr>
-                                  ))}
-                              </tbody>
-                          </table>
-                          <div className="mt-2 text-xs text-gray-500">
-                              <strong>Locations:</strong> {getProj().doors.filter(d => s.doors.includes(d.id)).map(d => `${d.mark} (${d.roomName})`).join(', ')}
-                          </div>
-                      </div>
-                  );
-              })}
-
-              <div className="fixed top-4 right-4 print:hidden">
-                  <button
-                    onClick={() => handleDownloadWithLimit(handlePrint)}
-                    className="px-4 py-2 bg-black text-white rounded shadow-lg flex items-center gap-2"
-                  >
-                    <Printer size={16}/> Print PDF
-                  </button>
-                  <button onClick={() => setPrintMode(false)} className="ml-2 px-4 py-2 bg-gray-200 text-black rounded shadow-lg">Close</button>
-              </div>
+    return (
+      <div className="bg-white min-h-screen text-black p-8 font-serif">
+        <div className="flex justify-between items-center mb-8 border-b-2 border-black pb-4">
+          <div>
+            <h1 className="text-3xl font-bold uppercase tracking-wider">{getProj().name?.trim() || "New Project"}</h1>
+            <p className="text-sm">Architectural Door Hardware Schedule</p>
           </div>
-      );
+          <div className="text-right text-sm">
+            <p>
+              <strong>Client:</strong> {getProj().details?.client || "N/A"}
+            </p>
+            <p>
+              <strong>Architect:</strong> {getProj().details?.architect || "N/A"}
+            </p>
+            <p>
+              <strong>Date:</strong> {new Date().toLocaleDateString()}
+            </p>
+          </div>
+        </div>
+
+        {getProj().sets.map((s) => {
+          const repDoor = getProj().doors.find((d) => s.doors.includes(d.id));
+          return (
+            <div key={s.id} className="mb-10 break-inside-avoid">
+              <div className="flex justify-between items-end border-b border-black mb-2 pb-1">
+                <h2 className="text-xl font-bold">
+                  {s.id}: {s.name}
+                </h2>
+                <span className="text-sm font-mono">
+                  {repDoor ? `${repDoor.fire > 0 ? `FD${repDoor.fire}` : "NFR"} | ${repDoor.material} | ${repDoor.config}` : ""}
+                </span>
+              </div>
+              <div className="mb-4 text-sm italic text-gray-700">{s.operation}</div>
+
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="bg-gray-100 border-b border-gray-400">
+                    <th className="text-left p-2">Category</th>
+                    <th className="text-left p-2">Item</th>
+                    <th className="text-left p-2">Description</th>
+                    <th className="text-left p-2">Finish</th>
+                    <th className="text-left p-2">Acoustic</th>
+                    <th className="text-center p-2">Qty</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.keys(BHMA_CATEGORIES).map((catGroup) => {
+                    const itemsInGroup = s.items.filter((i) => BHMA_CATEGORIES[catGroup].includes(i.category));
+                    if (itemsInGroup.length === 0) return null;
+                    return (
+                      <React.Fragment key={catGroup}>
+                        <tr className="bg-gray-50">
+                          <td colSpan="6" className="p-1 pl-2 font-bold text-xs uppercase text-gray-500 border-b">
+                            {catGroup}
+                          </td>
+                        </tr>
+                        {itemsInGroup.map((item, i) => (
+                          <tr key={i} className="border-b border-gray-200">
+                            <td className="p-2 text-xs text-gray-400">{item.category}</td>
+                            <td className="p-2 font-bold">{item.type}</td>
+                            <td className="p-2">
+                              {item.style} - {item.spec}
+                            </td>
+                            <td className="p-2">{item.finish}</td>
+                            <td className="p-2">{item.acousticContribution || ""}</td>
+                            <td className="text-center p-2">{item.qty}</td>
+                          </tr>
+                        ))}
+                      </React.Fragment>
+                    );
+                  })}
+                  {s.items
+                    .filter((i) => !Object.values(BHMA_CATEGORIES).flat().includes(i.category))
+                    .map((item, i) => (
+                      <tr key={`other-${i}`} className="border-b border-gray-200">
+                        <td className="p-2 text-xs text-gray-400">{item.category}</td>
+                        <td className="p-2 font-bold">{item.type}</td>
+                        <td className="p-2">
+                          {item.style} - {item.spec}
+                        </td>
+                        <td className="p-2">{item.finish}</td>
+                        <td className="p-2">{item.acousticContribution || ""}</td>
+                        <td className="text-center p-2">{item.qty}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+              <div className="mt-2 text-xs text-gray-500">
+                <strong>Locations:</strong>{" "}
+                {getProj()
+                  .doors.filter((d) => s.doors.includes(d.id))
+                  .map((d) => `${d.mark} (${d.roomName})`)
+                  .join(", ")}
+              </div>
+            </div>
+          );
+        })}
+
+        <div className="fixed top-4 right-4 print:hidden">
+          <button
+            onClick={() => handleDownloadWithLimit(handlePrint)}
+            className="px-4 py-2 bg-black text-white rounded shadow-lg flex items-center gap-2"
+          >
+            <Printer size={16} /> Print PDF
+          </button>
+          <button onClick={() => setPrintMode(false)} className="ml-2 px-4 py-2 bg-gray-200 text-black rounded shadow-lg">
+            Close
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -3792,7 +3899,7 @@ const App = () => {
                       className="w-full px-4 py-2 text-sm text-left text-gray-800 hover:bg-indigo-50 flex items-center gap-2"
                     >
                       <MessageSquare size={16} className="text-amber-500" />
-                      Send Feedback
+                      Share Feedback
                     </button>
                   )}
                   {isAdmin && (
@@ -3925,35 +4032,110 @@ const App = () => {
           <div>
             {/* Stepper */}
             <div className="mb-6 md:mb-10">
-              <div className="relative">
-                <div className="absolute top-1/2 left-4 right-4 h-0.5 bg-gray-200 -z-10 hidden md:block"></div>
-                <div className="flex flex-wrap justify-center gap-4 md:gap-16 px-2">
-                  {['Project Setup', 'Door Schedule', 'Hardware Sets', 'Validation & Review'].map((label, idx) => (
-                    <div
-                      key={idx}
-                      onClick={() => setStep(idx)}
-                      className="flex flex-col items-center gap-2 cursor-pointer group flex-1 min-w-[120px] max-w-[150px] md:max-w-none px-2 relative z-10"
-                    >
-                      <div
-                        className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center font-bold border-2 transition-colors ${
-                          step === idx
-                            ? 'bg-indigo-600 border-indigo-600 text-white'
-                            : step > idx
-                              ? 'bg-green-500 border-green-500 text-white'
-                              : 'bg-white border-gray-300 text-gray-400'
-                        }`}
-                      >
-                        {step > idx ? <Check size={16} /> : idx + 1}
-                      </div>
-                      <span
-                        className={`text-[10px] md:text-xs font-bold uppercase tracking-wider text-center ${
-                          step === idx ? 'text-indigo-600' : 'text-gray-400'
-                        }`}
-                      >
-                        {label}
-                      </span>
-                    </div>
-                  ))}
+              <div className="bg-white/90 border border-gray-200 rounded-2xl px-3 py-4 shadow-sm">
+                {/* Desktop horizontal flow */}
+                <div className="hidden md:flex items-center gap-3">
+                  {WIZARD_STEPS.map((label, idx, arr) => {
+                    const isActive = step === idx;
+                    const isComplete = isStepComplete(idx);
+                    const isWarning = blockedStep === idx && idx > step;
+                    return (
+                      <React.Fragment key={`desktop-step-${label}`}>
+                        <button
+                          type="button"
+                          onClick={() => handleStepChange(idx)}
+                          className="flex flex-col items-center gap-2 min-w-[130px] text-center focus:outline-none"
+                        >
+                          <div
+                            className={`w-10 h-10 rounded-full flex items-center justify-center font-bold border-2 transition-all ${
+                              isActive
+                                ? 'bg-indigo-600 border-indigo-600 text-white shadow'
+                                : isComplete
+                                ? 'bg-emerald-500 border-emerald-500 text-white'
+                                : isWarning
+                                ? 'bg-orange-50 border-orange-400 text-orange-500'
+                                : 'bg-white border-gray-300 text-gray-400'
+                            }`}
+                          >
+                            {isComplete ? <Check size={16} /> : idx + 1}
+                          </div>
+                          <span
+                            className={`text-xs font-bold uppercase tracking-wider ${
+                              isActive ? 'text-indigo-600' : 'text-gray-400'
+                            }`}
+                          >
+                            {label}
+                          </span>
+                        </button>
+                        {idx < arr.length - 1 && (
+                          <div
+                            className={`flex-1 h-0.5 rounded-full ${
+                              blockedStep === idx + 1
+                                ? 'bg-orange-400'
+                                : isStepComplete(idx)
+                                ? 'bg-emerald-400'
+                                : 'bg-gray-200'
+                            }`}
+                          />
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+                {/* Mobile single line */}
+                <div className="md:hidden">
+                  <div className="flex items-center justify-between gap-2">
+                    {WIZARD_SHORT_LABELS.map((shortLabel, idx, arr) => {
+                      const label = WIZARD_STEPS[idx];
+                      const isActive = step === idx;
+                      const isComplete = isStepComplete(idx);
+                      const isWarning = blockedStep === idx && idx > step;
+                      return (
+                        <React.Fragment key={`mobile-step-${shortLabel}`}>
+                          <button
+                            type="button"
+                            onClick={() => handleStepChange(idx)}
+                            className="flex flex-col items-center gap-0.5 text-center focus:outline-none bg-transparent"
+                          >
+                            <div
+                              className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold border-2 transition-all ${
+                                isActive
+                                  ? "bg-indigo-600 border-indigo-600 text-white shadow"
+                                  : isComplete
+                                  ? "bg-emerald-500 border-emerald-500 text-white"
+                                  : isWarning
+                                  ? "bg-orange-50 border-orange-400 text-orange-500"
+                                  : "bg-white border-gray-300 text-gray-400"
+                              }`}
+                            >
+                              {isComplete ? <Check size={14} /> : idx + 1}
+                            </div>
+                            <span
+                              className={`text-[9px] font-bold uppercase tracking-wider leading-tight ${
+                                isActive ? "text-indigo-600" : "text-gray-500"
+                              }`}
+                            >
+                              {shortLabel}
+                            </span>
+                            <span className="sr-only">{label}</span>
+                          </button>
+                          {idx < arr.length - 1 && (
+                            <div className="flex-1">
+                              <div
+                                className={`h-0.5 rounded-full ${
+                                  blockedStep === idx + 1
+                                    ? "bg-orange-400"
+                                    : isStepComplete(idx)
+                                    ? "bg-emerald-400"
+                                    : "bg-gray-200"
+                                }`}
+                              />
+                            </div>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             </div>
@@ -3963,6 +4145,7 @@ const App = () => {
               const proj = getProj();
               const facilityType = proj.type;
               const facilityInputs = getInstantInputsForProject(proj, facilityType);
+              const instantEnabled = Boolean(proj.instantSchedulingEnabled);
               const numberField = (label, field, min = 0) => (
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-bold uppercase text-gray-500">{label}</label>
@@ -4150,20 +4333,54 @@ const App = () => {
                     </div>
 
                     <div className="border-t pt-6">
-                      <div className="flex flex-col gap-1 mb-4">
-                        <h3 className="text-sm font-bold text-gray-800">Instant Door Scheduling (Optional)</h3>
-                        <p className="text-xs text-gray-500">Answer a few quick questions and we can auto-populate a starting door schedule for you.</p>
+                    <div className="flex flex-col gap-1 mb-4">
+                        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                          <div>
+                            <h3 className="text-sm font-bold text-gray-800">Instant Door Scheduling (Optional)</h3>
+                            <p className="text-xs text-gray-500">Would you like us to prep a starter schedule automatically?</p>
+                          </div>
+                          <div className="flex items-center gap-3 self-start">
+                            <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">
+                              {instantEnabled ? "Instant scheduling ON" : "Instant scheduling OFF"}
+                            </span>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={instantEnabled}
+                              onClick={() => setInstantSchedulingEnabled(!instantEnabled)}
+                              className={`relative inline-flex h-5 w-10 shrink-0 items-center rounded-full transition-colors ${
+                                instantEnabled ? "bg-indigo-600" : "bg-gray-300"
+                              }`}
+                            >
+                              <span
+                                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
+                                  instantEnabled ? "translate-x-[22px]" : "translate-x-1"
+                                }`}
+                              />
+                            </button>
+                          </div>
+                        </div>
+                        <p className="text-xs text-gray-500">Toggle ON if you'd like to answer a few quick questions and auto-populate a starting door schedule.</p>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="col-span-full text-xs font-bold uppercase tracking-wide text-indigo-700 bg-indigo-50 border border-indigo-100 rounded px-3 py-2">
+                        <div className={`col-span-full text-xs font-bold uppercase tracking-wide rounded px-3 py-2 border ${
+                          instantEnabled ? "text-indigo-700 bg-indigo-50 border-indigo-100" : "text-gray-500 bg-gray-50 border-gray-200"
+                        }`}>
                           Facility: {facilityType}
                         </div>
-                        {renderInstantFields()}
+                        {instantEnabled ? (
+                          renderInstantFields()
+                        ) : (
+                          <div className="col-span-full text-sm text-gray-500 border border-dashed border-gray-300 rounded-lg px-3 py-4 bg-gray-50">
+                            Instant Door Scheduling is currently turned off. Flip the toggle above if you want Instaspec to generate
+                            a starter list based on your building inputs.
+                          </div>
+                        )}
                       </div>
                     </div>
 
                     <div className="flex justify-end mt-6">
-                      <button onClick={() => setStep(1)} className="w-full md:w-auto px-6 py-2.5 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 font-medium flex items-center justify-center gap-2">
+                      <button onClick={() => handleStepChange(1)} className="w-full md:w-auto px-6 py-2.5 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 font-medium flex items-center justify-center gap-2">
                         Save & Continue <ArrowRight size={18} />
                       </button>
                     </div>
@@ -4196,13 +4413,15 @@ const App = () => {
                     >
                       Bulk Assign
                     </button>
-                    <button
-                      onClick={handleInstantScheduleClick}
-                      className="flex-1 px-4 py-2 border border-amber-200 text-amber-700 rounded-md hover:bg-amber-50 font-medium flex items-center justify-center gap-2 whitespace-nowrap"
-                      title="Not sure where to begin? Generate a starter door list based on your building."
-                    >
-                      <Zap size={18} /> Instant Door Schedule
-                    </button>
+                    {getProj()?.instantSchedulingEnabled && (
+                      <button
+                        onClick={handleInstantScheduleClick}
+                        className="flex-1 px-4 py-2 border border-amber-200 text-amber-700 rounded-md hover:bg-amber-50 font-medium flex items-center justify-center gap-2 whitespace-nowrap"
+                        title="Not sure where to begin? Generate a starter door list based on your building."
+                      >
+                        <Zap size={18} /> Instant Door Schedule
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -4625,10 +4844,10 @@ const App = () => {
                     );})}
                   </div>
                   <div className="p-4 border-t border-gray-200 bg-gray-50 flex justify-between">
-                    <button onClick={() => setStep(1)} className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-100 flex items-center gap-2">
+                    <button onClick={() => handleStepChange(1)} className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-100 flex items-center gap-2">
                       <ArrowLeft size={16}/> Back
                     </button>
-                    <button onClick={() => setStep(3)} className="px-6 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 flex items-center gap-2 font-medium">
+                    <button onClick={() => handleStepChange(3)} className="px-6 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 flex items-center gap-2 font-medium">
                       Finish & Review <ArrowRight size={16}/>
                     </button>
                   </div>
@@ -4641,17 +4860,18 @@ const App = () => {
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 md:p-8 animate-slideUp">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
                   <h2 className="text-2xl font-bold">Specification Review</h2>
-                  <div className="flex gap-3">
-                      {userRole !== 'Owner' && (
+                  <div className="w-full md:w-auto flex flex-col gap-3">
+                    <div className="hidden md:flex gap-3">
+                      {userRole !== "Owner" && (
                         <button
                           onClick={() => handleDownloadWithLimit(exportBIMData)}
                           className="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 font-bold flex items-center justify-center gap-2 shadow-sm text-sm"
                         >
-                            <Box size={18} /> Export BIM Data
+                          <Box size={18} /> Export BIM Data
                         </button>
                       )}
                       <button
-                        onClick={() => setPrintMode(true)}
+                        onClick={openPrintPreview}
                         className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold flex items-center justify-center gap-2 shadow-sm text-sm"
                       >
                         <FileText size={18} /> Print Spec Sheet
@@ -4670,17 +4890,74 @@ const App = () => {
                           <AlertCircle size={18} /> Report an Error
                         </button>
                       )}
+                    </div>
+                    <div className="md:hidden">
+                      <div className="border border-gray-200 rounded-xl overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => setIsMobileDownloadOpen((prev) => !prev)}
+                          className="w-full flex items-center justify-between px-4 py-2 text-sm font-semibold text-gray-700 bg-white"
+                        >
+                          <span>Download Files</span>
+                          <ChevronDown
+                            size={18}
+                            className={`transition-transform ${isMobileDownloadOpen ? "rotate-180" : ""}`}
+                          />
+                        </button>
+                        {isMobileDownloadOpen && (
+                          <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 space-y-2">
+                            {userRole !== "Owner" && (
+                              <button
+                                onClick={() => {
+                                  handleDownloadWithLimit(exportBIMData);
+                                  setIsMobileDownloadOpen(false);
+                                }}
+                                className="w-full px-4 py-2 bg-gray-800 text-white rounded-lg text-sm font-semibold flex items-center justify-center gap-2"
+                              >
+                                <Box size={16} /> Export BIM Data
+                              </button>
+                            )}
+                            <button
+                              onClick={() => {
+                                openPrintPreview();
+                                setIsMobileDownloadOpen(false);
+                              }}
+                              className="w-full px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold flex items-center justify-center gap-2"
+                            >
+                              <FileText size={16} /> Print Spec Sheet
+                            </button>
+                            <button
+                              onClick={() => {
+                                handleDownloadWithLimit(exportData);
+                                setIsMobileDownloadOpen(false);
+                              }}
+                              className="w-full px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-semibold flex items-center justify-center gap-2"
+                            >
+                              <FileSpreadsheet size={16} /> Export Schedule
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      {user && (
+                        <button
+                          onClick={() => setIsReportFeedbackOpen(true)}
+                          className="w-full mt-3 px-4 py-2 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 font-semibold flex items-center justify-center gap-2 shadow-sm text-sm"
+                        >
+                          <AlertCircle size={18} /> Report an Error
+                        </button>
+                      )}
+                    </div>
+                    {!isAdmin && user && (
+                      <div className="text-xs text-gray-500">
+                        Downloads used: {downloadCount ?? 0} / {DOWNLOAD_LIMIT}
+                      </div>
+                    )}
+                    {downloadWarning && (
+                      <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+                        {downloadWarning}
+                      </div>
+                    )}
                   </div>
-                  {!isAdmin && user && (
-                    <div className="text-xs text-gray-500 mt-2">
-                      Downloads used: {downloadCount ?? 0} / {DOWNLOAD_LIMIT}
-                    </div>
-                  )}
-                  {downloadWarning && (
-                    <div className="mt-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
-                      {downloadWarning}
-                    </div>
-                  )}
                 </div>
 
                 {/* Validation Report */}
@@ -4730,16 +5007,41 @@ const App = () => {
       {view === 'wizard' && (
         <footer className="bg-slate-900/95 text-white px-4 md:px-8 py-8 shadow-inner">
           <div className="max-w-7xl mx-auto flex flex-col gap-4">
-            <div className="flex flex-col md:flex-row gap-3 justify-center items-stretch">
-              {HERO_STATS.map((stat) => (
-                <div
-                  key={`wizard-stat-${stat.id}`}
-                  className="flex-1 min-w-[160px] bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-center"
-                >
-                  <div className="text-lg font-extrabold tracking-tight">{Number(stat.value).toLocaleString()}</div>
-                  <div className="text-[11px] uppercase tracking-[0.3em] text-white/60">{stat.metric}</div>
+            <div className="w-full max-w-4xl mx-auto">
+              <div className="hidden md:flex gap-3 justify-center items-stretch">
+                {HERO_STATS.map((stat) => (
+                  <div
+                    key={`wizard-stat-desktop-${stat.id}`}
+                    className="flex-1 min-w-[160px] bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-center"
+                  >
+                    <div className="text-lg font-extrabold tracking-tight">{Number(stat.value).toLocaleString()}</div>
+                    <div className="text-[11px] uppercase tracking-[0.3em] text-white/60">{stat.metric}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="md:hidden">
+                <div className="grid grid-cols-2 gap-3">
+                  {HERO_STATS.slice(0, 6).map((stat) => (
+                    <div
+                      key={`wizard-stat-mobile-${stat.id}`}
+                      className="flex flex-col items-center justify-center bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-center min-h-[90px]"
+                    >
+                      <div className="text-xl font-extrabold tracking-tight">{Number(stat.value).toLocaleString()}</div>
+                      <div className="text-[11px] uppercase tracking-[0.3em] text-white/60">{stat.metric}</div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+                {HERO_STATS[6] && (
+                  <div className="mt-3 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-center">
+                    <div className="text-xl font-extrabold tracking-tight">
+                      {Number(HERO_STATS[6].value).toLocaleString()}
+                    </div>
+                    <div className="text-[11px] uppercase tracking-[0.3em] text-white/60">
+                      {HERO_STATS[6].metric}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="text-center text-xs text-white/60">
               Engineered with care by{" "}

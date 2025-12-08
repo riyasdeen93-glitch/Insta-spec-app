@@ -306,3 +306,55 @@ export async function incrementDownloadCount(rawEmail, limit = DEFAULT_DOWNLOAD_
     return { allowed: true, count: nextCount, limit };
   });
 }
+
+export async function extendBetaUserExpiry(rawEmail, hoursToAdd = 24) {
+  const email = normalizeEmail(rawEmail);
+  const hours = Number(hoursToAdd);
+  if (!email) throw new Error("Missing email");
+  if (!Number.isFinite(hours) || hours <= 0) {
+    throw new Error("Hours to extend must be a positive number.");
+  }
+  const cached = betaUserCache.get(email);
+  const user = cached || (await getBetaUser(email));
+  if (!user) {
+    throw new Error("Beta user not found.");
+  }
+  const now = Date.now();
+  const baseExpiry = typeof user.expiresAt === "number" ? Math.max(user.expiresAt, now) : now;
+  const newExpiry = baseExpiry + hours * 60 * 60 * 1000;
+  return saveBetaUser({
+    email,
+    code: user.code,
+    plan: user.plan || "beta_tester",
+    isAdmin: Boolean(user.isAdmin),
+    expiresAt: newExpiry
+  });
+}
+
+export async function extendDownloadLimit(rawEmail, increment = 5) {
+  const email = normalizeEmail(rawEmail);
+  const additional = Number(increment);
+  if (!email) throw new Error("Missing email");
+  if (!Number.isFinite(additional) || additional <= 0) {
+    throw new Error("Increment must be a positive number.");
+  }
+  const usageRef = doc(db, DOWNLOAD_USAGE_COLLECTION, email);
+  return runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(usageRef);
+    const existing = snap.exists() ? snap.data() : {};
+    const currentLimit = existing.limit || DEFAULT_DOWNLOAD_LIMIT;
+    const nextLimit = currentLimit + additional;
+    const count = existing.count || 0;
+    transaction.set(
+      usageRef,
+      {
+        email,
+        count,
+        limit: nextLimit,
+        updatedAt: Date.now()
+      },
+      { merge: true }
+    );
+    return { count, limit: nextLimit };
+  });
+}
