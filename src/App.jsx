@@ -174,6 +174,14 @@ const REVIEW_NOTICE =
 const MAIN_ENTRANCE_NOTE =
   "Code Check: Main entrance fire rating must be verified per local code based on building height and occupancy.";
 
+const RESIDENTIAL_UNIT_TYPES = ["1BHK", "2BHK", "3BHK"];
+const RESIDENTIAL_DEFAULT_MIX = { "1BHK": 0, "2BHK": 4, "3BHK": 0 };
+const RESIDENTIAL_UNIT_PLANS = {
+  "1BHK": { bedrooms: 1, bathrooms: 1 },
+  "2BHK": { bedrooms: 2, bathrooms: 2 },
+  "3BHK": { bedrooms: 3, bathrooms: 3 }
+};
+
 const isMainEntranceUsage = (value = "") =>
   String(value).toLowerCase().includes("main entrance");
 
@@ -193,8 +201,7 @@ const DEFAULT_INSTANT_INPUTS = {
   Residential: {
     floors: 4,
     unitsPerFloor: 4,
-    unitType: "2BHK",
-    identicalFloors: true
+    unitMix: { ...RESIDENTIAL_DEFAULT_MIX }
   },
   "Education / School": {
     floors: 3,
@@ -247,6 +254,68 @@ const BHMA_CATEGORIES = {
     "Securing": ["Locks", "Cylinders", "Electrified"],
     "Controlling": ["Closers", "Stops", "Handles"],
     "Protecting": ["Seals", "Accessories", "Protecting"]
+};
+
+const HISTORY_LIMIT = 30;
+
+const deepClone = (value) => {
+  if (typeof structuredClone === "function") {
+    return structuredClone(value);
+  }
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (err) {
+    return value;
+  }
+};
+
+const LAYMAN_HARDWARE_GROUPS = [
+  {
+    id: "Hanging",
+    label: "Hanging",
+    description: "Hinges, pivots and fittings",
+    categories: BHMA_CATEGORIES.Hanging,
+    accent: "from-amber-500 to-orange-500",
+    hint: "Edge & hinge zone"
+  },
+  {
+    id: "Securing",
+    label: "Securing",
+    description: "Locks, bolts and electrified hardware",
+    categories: BHMA_CATEGORIES.Securing,
+    accent: "from-sky-500 to-indigo-500",
+    hint: "Center lockface"
+  },
+  {
+    id: "Controlling",
+    label: "Controlling",
+    description: "Closers, holders and motion control hardware",
+    categories: BHMA_CATEGORIES.Controlling,
+    accent: "from-emerald-500 to-emerald-700",
+    hint: "Top frame / closer"
+  },
+  {
+    id: "Protecting",
+    label: "Protecting",
+    description: "Kick plates, seals and protective accessories",
+    categories: BHMA_CATEGORIES.Protecting,
+    accent: "from-slate-500 to-slate-700",
+    hint: "Bottom/kick zone"
+  }
+];
+
+const getProductItemsForCategories = (categories = []) => {
+  return categories.reduce((acc, category) => {
+    const catalog = PRODUCT_CATALOG[category];
+    if (!catalog?.types?.length) return acc;
+    const augmented = catalog.types.map((type) => ({
+      ...type,
+      category,
+      csi: catalog.csi || "",
+      description: (type.styles || []).slice(0, 2).join(", ")
+    }));
+    return acc.concat(augmented);
+  }, []);
 };
 
 const getBHMACategory = (cat) => {
@@ -345,10 +414,16 @@ const PRODUCT_CATALOG = {
           { name: "Electromechanical Mortise", styles: ["Fail-Safe", "Fail-Secure"], requiresTrim: true },
           { name: "Door Contact", styles: ["Surface", "Recessed"] },
           { name: "Push Button", styles: ["Request-to-Exit", "Emergency"] },
-          { name: "Power Supply", styles: ["12/24V Auto", "Dedicated"] }
+          { name: "Power Supply", styles: ["12/24V Auto", "Dedicated"] },
+          { name: "Card Reader", styles: ["Surface Mount", "Flush Mount"] }
       ]
   }
 };
+
+const HARDWARE_GROUP_COLUMNS = LAYMAN_HARDWARE_GROUPS.map((group) => ({
+  ...group,
+  items: getProductItemsForCategories(group.categories)
+}));
 
 const LOCK_TYPE_RULES = {
   Timber: ["Mortise Lock", "Cylindrical Lock", "Hotel Lock", "Panic Bar", "Electric Strike", "Magnetic Lock"],
@@ -371,11 +446,11 @@ const getAllowedLockTypesForMaterials = (materials = []) => {
 };
 
 const ELECTRIFIED_TYPE_RULES = {
-  Timber: ["Magnetic Lock", "Electric Strike"],
-  Metal: ["Magnetic Lock", "Electric Strike", "Electromechanical Mortise"],
-  Aluminum: ["Magnetic Lock", "Electric Strike"],
-  Glass: ["Magnetic Lock"],
-  default: ["Magnetic Lock", "Electric Strike"]
+  Timber: ["Magnetic Lock", "Electric Strike", "Card Reader"],
+  Metal: ["Magnetic Lock", "Electric Strike", "Electromechanical Mortise", "Card Reader"],
+  Aluminum: ["Magnetic Lock", "Electric Strike", "Card Reader"],
+  Glass: ["Magnetic Lock", "Card Reader"],
+  default: ["Magnetic Lock", "Electric Strike", "Card Reader"]
 };
 
 const getAllowedElectrifiedTypesForMaterials = (materials = []) => {
@@ -441,53 +516,125 @@ const normalizeDoor = (door) => {
   };
 };
 
+const normalizeResidentialMix = (source = {}) => {
+  const mix = {};
+  let total = 0;
+  RESIDENTIAL_UNIT_TYPES.forEach((type) => {
+    const value = Math.max(0, parseInt(source?.[type], 10) || 0);
+    mix[type] = value;
+    total += value;
+  });
+  if (total > 0) return mix;
+  return { ...RESIDENTIAL_DEFAULT_MIX };
+};
+
+const buildResidentialProfiles = (inputs, floors) => {
+  const mix = normalizeResidentialMix(inputs.unitMix);
+  const unitsFromMix = Object.values(mix).reduce((sum, item) => sum + item, 0);
+  const fallbackUnits = Math.max(1, inputs.unitsPerFloor || unitsFromMix || 1);
+  return [
+    {
+      id: "default",
+      label: "Typical Floor",
+      floors,
+      unitsPerFloor: Math.max(unitsFromMix, fallbackUnits),
+      unitMix: mix
+    }
+  ];
+};
+
 const INSTANT_SCHEDULE_RULES = {
   Residential: (inputs = {}) => {
     const floors = Math.max(1, parseInt(inputs.floors, 10) || 1);
-    const unitsPerFloor = Math.max(1, parseInt(inputs.unitsPerFloor, 10) || 1);
-    const totalUnits = floors * unitsPerFloor;
-    const unitType = inputs.unitType || "2BHK";
-    const plan = {
-      "1BHK": { bedrooms: 1, bathrooms: 1 },
-      "2BHK": { bedrooms: 2, bathrooms: 2 },
-      "3BHK": { bedrooms: 3, bathrooms: 3 }
-    }[unitType] || { bedrooms: 2, bathrooms: 2 };
+    const profiles = buildResidentialProfiles(inputs, floors);
     const doors = [];
+    const profile = profiles[0];
+    const profileMix = profile.unitMix || {};
+    const profileLabel = (profile.label || "").trim();
+    const prefix =
+      profileLabel && profileLabel.toLowerCase() !== "typical floor"
+        ? `${profileLabel} - `
+        : "";
+    Object.entries(profileMix)
+      .filter(([, qtyPerFloor]) => qtyPerFloor > 0)
+      .forEach(([type, qtyPerFloor]) => {
+        const plan = RESIDENTIAL_UNIT_PLANS[type] || RESIDENTIAL_UNIT_PLANS["2BHK"];
+        const units = qtyPerFloor * profile.floors;
+        if (units <= 0) return;
+        const notes = `Auto-generated residential ${profileLabel || type}`;
+        doors.push({
+          roomName: `${prefix}${type} Entry`,
+          use: "Unit Entrance (Fire Rated)",
+          qty: units,
+          width: 950,
+          height: 2150,
+          material: "Timber",
+          fire: 60,
+          notes
+        });
+        doors.push({
+          roomName: `${prefix}${type} Bedroom`,
+          use: "Bedroom / Internal",
+          qty: units * plan.bedrooms,
+          width: 900,
+          height: 2100,
+          notes
+        });
+        doors.push({
+          roomName: `${prefix}${type} Bathroom`,
+          use: "Bathroom / Privacy",
+          qty: units * plan.bathrooms,
+          width: 800,
+          height: 2100,
+          material: "Timber",
+          notes: `Privacy lockset recommended for ${type}`
+        });
+      });
+
+    if (doors.length === 0) return [];
+
+    const corridorQty = Math.max(1, floors * 2);
+    const serviceQty = Math.max(1, floors);
     doors.push({
-      roomName: "Unit Entry",
-      use: "Unit Entrance (Fire Rated)",
-      qty: totalUnits,
-      width: 950,
+      roomName: "Corridor Core",
+      use: "Corridor / Circulation",
+      qty: corridorQty,
+      width: 1000,
       height: 2150,
-      material: "Timber",
-      fire: 60,
-      notes: "Auto-generated residential entrance"
+      fire: 0,
+      ada: true,
+      notes: "Auto-generated corridor door"
     });
     doors.push({
-      roomName: "Bedroom",
-      use: "Bedroom / Internal",
-      qty: totalUnits * plan.bedrooms,
+      roomName: "Restroom Core",
+      use: "Restroom",
+      qty: corridorQty,
       width: 900,
-      height: 2100
+      height: 2100,
+      ada: true,
+      notes: "Auto-generated restroom core"
     });
     doors.push({
-      roomName: "Bathroom",
-      use: "Bathroom / Privacy",
-      qty: totalUnits * plan.bathrooms,
-      width: 800,
-      height: 2100,
-      material: "Timber",
-      notes: "Privacy lockset recommended"
+      roomName: "Stair / Exit",
+      use: "Stairwell / Exit",
+      qty: corridorQty,
+      width: 1000,
+      height: 2150,
+      material: "Metal",
+      fire: 60,
+      notes: "Stair door (code guidance)"
     });
     doors.push({
       roomName: "Service / Utility",
       use: "Service / Utility",
-      qty: floors,
+      qty: serviceQty,
       width: 900,
       height: 2100,
       material: "Metal",
-      fire: 30
+      fire: 30,
+      notes: "Service doors on each floor stack"
     });
+
     return doors;
   },
   "Education / School": (inputs = {}) => {
@@ -980,9 +1127,15 @@ const getSetWarnings = (set, profile) => {
     const missingComponents = MAGLOCK_SUPPORT_TYPES.filter(
       (supportType) => !electrified.some((i) => (i.type || "").toLowerCase() === supportType.toLowerCase())
     );
-    if (missingComponents.length > 0) {
+    const hasCardReader = electrified.some(
+      (item) => item.autoTag === "card-reader-kit" || (item.type || "").toLowerCase() === "card reader"
+    );
+    const relevantMissing = hasCardReader
+      ? missingComponents.filter((supportType) => supportType.toLowerCase() !== "push button")
+      : missingComponents;
+    if (relevantMissing.length > 0) {
       warnings.push(
-        `Magnetic locks require a release package (REX sensor, emergency button, fire alarm interface). Missing: ${missingComponents.join(", ")}.`
+        `Magnetic locks require a release package (REX sensor, emergency button, fire alarm interface). Missing: ${relevantMissing.join(", ")}.`
       );
     }
     const hasFailSecureMag = magLocks.some((i) => (i.style || "").toLowerCase().includes("fail-secure"));
@@ -1092,10 +1245,17 @@ const getNextRefForCategory = (items = [], category) => {
 };
 
 const MAGLOCK_SUPPORT_ITEMS = [
-  { type: "Door Contact", style: "Surface", spec: "Status monitor contact", qty: "1" },
-  { type: "Push Button", style: "Request-to-Exit", spec: "Illuminated REX button", qty: "1" },
-  { type: "Power Supply", style: "12/24V Auto", spec: "Fail-safe rated supply", qty: "1" }
+  { type: "Door Contact", style: "Surface", spec: "Status monitor contact", qty: "1", autoTag: "maglock-door-contact" },
+  { type: "Push Button", style: "Request-to-Exit", spec: "Illuminated REX button", qty: "1", autoTag: "maglock-push-button" },
+  { type: "Power Supply", style: "12/24V Auto", spec: "Fail-safe rated supply", qty: "1", autoTag: "maglock-power-supply" }
 ];
+
+const CARD_READER_ITEM = {
+  type: "Card Reader",
+  style: "Surface Mount",
+  spec: "Access control card reader",
+  qty: "1"
+};
 
 const MAGLOCK_SUPPORT_TYPES = MAGLOCK_SUPPORT_ITEMS.map((item) => item.type);
 const ACOUSTIC_THRESHOLD = 40;
@@ -1103,12 +1263,31 @@ const doorsInlined = (config) => (config === 'Double' ? 'double leaf' : 'single 
 const ADA_MIN_CLEAR_OPENING_MM = 813;
 const ADA_CLEARANCE_DEDUCTION_MM = 38; // approx. 1.5" allowance for hinges/handles
 
-const ensureMaglockSupportItems = (items = [], standard = "ANSI") => {
+const ensureElectrifiedSupportItems = (items = [], standard = "ANSI", context = {}) => {
   const finish = getDefaultFinishForStandard(standard);
   const hasMaglock = items.some((item) => (item.type || "").toLowerCase().includes("magnetic lock"));
+  const hasElectricStrike = items.some((item) => (item.type || "").toLowerCase().includes("electric strike"));
+  const removeAutoItems = !hasMaglock && !hasElectricStrike;
   let updatedItems = items.filter((item) => (item.type || "").toLowerCase() !== "maglock release package");
+  if (removeAutoItems) {
+    updatedItems = updatedItems.filter((item) => item.autoTag !== "maglock-kit" && item.autoTag !== "card-reader-kit");
+  }
+  const removedAutoTags = new Set(context.removedAutoTags || []);
+  const cardReaderKitRow = updatedItems.find((item) => item.autoTag === "card-reader-kit");
+  const cardReaderKitPresent = Boolean(cardReaderKitRow);
+  const cardReaderExists = Boolean(cardReaderKitRow && cardReaderKitRow.type === CARD_READER_ITEM.type);
+  const canAutoAddCardReader =
+    (hasMaglock || hasElectricStrike) &&
+    !removedAutoTags.has("card-reader-kit") &&
+    !cardReaderKitPresent;
+  const willAutoAddCardReader = canAutoAddCardReader;
+  const cardReaderPlanned = cardReaderKitPresent || willAutoAddCardReader;
+
   if (hasMaglock) {
     MAGLOCK_SUPPORT_ITEMS.forEach((kit) => {
+      const kitTag = kit.autoTag || "maglock-kit";
+      if (removedAutoTags.has("maglock-kit") || removedAutoTags.has(kitTag)) return;
+      if (kit.type?.toLowerCase().includes("push button") && cardReaderPlanned) return;
       const exists = updatedItems.some((item) => item.category === "Electrified" && item.type === kit.type);
       if (!exists) {
         updatedItems.push({
@@ -1119,17 +1298,29 @@ const ensureMaglockSupportItems = (items = [], standard = "ANSI") => {
           spec: kit.spec,
           qty: kit.qty,
           finish,
-          autoTag: "maglock-kit"
+          autoTag: kitTag
         });
       }
     });
-  } else {
-    updatedItems = updatedItems.filter((item) => item.autoTag !== "maglock-kit");
   }
+
+  if (willAutoAddCardReader) {
+    updatedItems.push({
+      category: "Electrified",
+      ref: getNextRefForCategory(updatedItems, "Electrified"),
+      type: CARD_READER_ITEM.type,
+      style: CARD_READER_ITEM.style || getTypeDefaultStyle("Electrified", CARD_READER_ITEM.type),
+      spec: CARD_READER_ITEM.spec,
+      qty: CARD_READER_ITEM.qty,
+      finish,
+      autoTag: "card-reader-kit"
+    });
+  }
+
   return updatedItems;
 };
 
-const ELECTRIFIED_AUX_TYPES = [...MAGLOCK_SUPPORT_TYPES];
+const ELECTRIFIED_AUX_TYPES = [...MAGLOCK_SUPPORT_TYPES, CARD_READER_ITEM.type];
 const enforceSingleHinge = (items = []) => {
   let hingeKept = false;
   return items.filter((item) => {
@@ -1213,7 +1404,7 @@ const applyFinishOverrides = (items = [], standard = "ANSI") => {
 };
 
 const sanitizeHardwareItems = (items = [], standard = "ANSI", context = {}) => {
-  const afterMaglock = ensureMaglockSupportItems(items, standard);
+  const afterMaglock = ensureElectrifiedSupportItems(items, standard);
   const afterHinge = enforceSingleHinge(afterMaglock);
   const afterAcoustic = ensureAcousticItems(afterHinge, { ...context, standard });
   return applyFinishOverrides(afterAcoustic, standard);
@@ -1377,17 +1568,21 @@ const deriveSetIntentFromItems = (items = []) => {
 const normalizeProject = (project) => {
   if (!project) return project;
   const normalizedDoors = (project.doors || []).map(normalizeDoor);
-  const normalizedSets = (project.sets || []).map((set) => {
-    const doorsForSet = normalizedDoors.filter((d) => (set.doors || []).includes(d.id));
-    const baseItems = set.items || [];
-    const context = computeSetContext(doorsForSet, baseItems);
-    const normalizedItems = sanitizeHardwareItems(baseItems, project.standard, context);
-    return {
-      ...set,
-      intent: set.intent || deriveSetIntentFromItems(normalizedItems),
-      items: normalizedItems
-    };
-  });
+    const normalizedSets = (project.sets || []).map((set) => {
+      const doorsForSet = normalizedDoors.filter((d) => (set.doors || []).includes(d.id));
+      const baseItems = set.items || [];
+      const context = {
+        ...computeSetContext(doorsForSet, baseItems),
+        removedAutoTags: set.removedAutoTags || []
+      };
+      const normalizedItems = sanitizeHardwareItems(baseItems, project.standard, context);
+      return {
+        ...set,
+        intent: set.intent || deriveSetIntentFromItems(normalizedItems),
+        items: normalizedItems,
+        removedAutoTags: set.removedAutoTags || []
+      };
+    });
   const defaults = cloneInstantInputs();
   const mergedInstant = { ...defaults, ...(project.instantInputs || {}) };
   Object.keys(defaults).forEach((typeKey) => {
@@ -1710,6 +1905,7 @@ const DoorPreview = ({ door, hardwareSet }) => {
   const hasMagLock = includesKeyword([...locks, ...electrifiedLocks], 'magnetic lock');
   const hasTrueElectrified = hasMagLock || electrifiedLocks.some((item) => !ELECTRIFIED_AUX_TYPES.includes(item.type));
   const hasPushButton = includesKeyword(electrifiedLocks, 'push button');
+  const hasCardReader = includesKeyword(electrifiedLocks, 'card reader');
   const hasPullHandle = includesKeyword(handles, 'pull');
   const hasLeverHandle = includesKeyword(handles, 'lever');
   const hasPushPlate = includesKeyword(handles, 'push');
@@ -1773,6 +1969,12 @@ const DoorPreview = ({ door, hardwareSet }) => {
       ? Math.min(frameX + frameWidth + 4, viewWidth - pushButtonWidth - 2)
       : Math.max(2, frameX - pushButtonWidth - 4);
     const pushButtonY = doorY + doorHeight * 0.45 - pushButtonHeight / 2;
+    const cardReaderWidth = 18;
+    const cardReaderHeight = 32;
+    const cardReaderX = strikeOnRight
+      ? Math.min(frameX + frameWidth + 6, viewWidth - cardReaderWidth - 4)
+      : Math.max(4, frameX - cardReaderWidth - 6);
+    const cardReaderY = doorY + doorHeight * 0.28;
     let hingeVisual = 'butt';
     if (hingeDescriptor.includes('continuous')) hingeVisual = 'continuous';
     else if (hingeDescriptor.includes('concealed')) hingeVisual = 'concealed';
@@ -2028,6 +2230,43 @@ const DoorPreview = ({ door, hardwareSet }) => {
               fill="#cbd5e1"
               stroke="#334155"
               strokeWidth="0.8"
+            />
+          </g>
+        )}
+        {hasCardReader && !isInactive && (
+          <g>
+            <rect
+              x={cardReaderX}
+              y={cardReaderY}
+              width={cardReaderWidth}
+              height={cardReaderHeight}
+              rx="3"
+              fill="#0f172a"
+              stroke="#1f2937"
+              strokeWidth="1"
+            />
+            <rect
+              x={cardReaderX + 3}
+              y={cardReaderY + 6}
+              width={cardReaderWidth - 6}
+              height={14}
+              rx="2"
+              fill="#94a3b8"
+              opacity="0.9"
+            />
+            <circle
+              cx={cardReaderX + cardReaderWidth / 2}
+              cy={cardReaderY + cardReaderHeight - 12}
+              r="3"
+              fill="#0ea5e9"
+              stroke="#1e3a8a"
+              strokeWidth="0.8"
+            />
+            <circle
+              cx={cardReaderX + cardReaderWidth / 2}
+              cy={cardReaderY + cardReaderHeight - 6}
+              r="1.3"
+              fill="#22c55e"
             />
           </g>
         )}
@@ -2410,6 +2649,16 @@ const App = () => {
   const [view, setView] = useState('landing');
   const [step, setStep] = useState(0);
   const [projects, setProjects] = useState([]);
+  const undoRedoRef = useRef(false);
+  const [historyState, setHistoryState] = useState(() => ({
+    past: [],
+    present: deepClone([]),
+    future: []
+  }));
+  const [desktopShortcutsEnabled, setDesktopShortcutsEnabled] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return window.matchMedia("(min-width: 1024px)").matches;
+  });
   const [currentId, setCurrentId] = useState(null);
   const [isDoorModalOpen, setIsDoorModalOpen] = useState(false);
   const [userRole, setUserRole] = useState('Architect');
@@ -2426,6 +2675,34 @@ const App = () => {
   const [isMobileDownloadOpen, setIsMobileDownloadOpen] = useState(false);
   const [blockedStep, setBlockedStep] = useState(null);
   const [reviewFinalized, setReviewFinalized] = useState(false);
+  const historySyncRef = useRef(false);
+
+  const canUndo = historyState.past.length > 0;
+  const canRedo = historyState.future.length > 0;
+
+  const undoHistory = useCallback(() => {
+    setHistoryState((prev) => {
+      if (!prev.past.length) return prev;
+      const previous = prev.past[prev.past.length - 1];
+      undoRedoRef.current = true;
+      setProjects(previous);
+      const nextPast = prev.past.slice(0, -1);
+      const nextFuture = [prev.present, ...prev.future].slice(0, HISTORY_LIMIT);
+      return { past: nextPast, present: previous, future: nextFuture };
+    });
+  }, [setProjects]);
+
+  const redoHistory = useCallback(() => {
+    setHistoryState((prev) => {
+      if (!prev.future.length) return prev;
+      const nextEntry = prev.future[0];
+      undoRedoRef.current = true;
+      setProjects(nextEntry);
+      const nextPast = [...prev.past, prev.present].slice(-HISTORY_LIMIT);
+      const nextFuture = prev.future.slice(1);
+      return { past: nextPast, present: nextEntry, future: nextFuture };
+    });
+  }, [setProjects]);
 
   const openPrompt = useCallback((config = {}) => {
     return new Promise((resolve) => {
@@ -2535,6 +2812,7 @@ const App = () => {
   const [doorHint, setDoorHint] = useState('');
   const [complianceNote, setComplianceNote] = useState(null);
   const [addItemModal, setAddItemModal] = useState({ isOpen: false, setId: null });
+  const [compatibilityAlert, setCompatibilityAlert] = useState(null);
   const [bulkModal, setBulkModal] = useState({ isOpen: false, templateId: "", markPrefix: "", locationsText: "" });
   const [showAuditLog, setShowAuditLog] = useState(false);
   const [saveStatus, setSaveStatus] = useState('Saved');
@@ -2561,6 +2839,55 @@ const App = () => {
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [isMobileNavOpen]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const media = window.matchMedia("(min-width: 1024px)");
+    const handleChange = (event) => setDesktopShortcutsEnabled(event.matches);
+    if (media.addEventListener) {
+      media.addEventListener("change", handleChange);
+    } else {
+      media.addListener(handleChange);
+    }
+    return () => {
+      if (media.removeEventListener) {
+        media.removeEventListener("change", handleChange);
+      } else {
+        media.removeListener(handleChange);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handleKeyDown = (event) => {
+      if (!desktopShortcutsEnabled) return;
+      if (!event.ctrlKey || event.metaKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "z" && !event.shiftKey && canUndo) {
+        event.preventDefault();
+        undoHistory();
+      } else if ((key === "y" || (key === "z" && event.shiftKey)) && canRedo) {
+        event.preventDefault();
+        redoHistory();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [desktopShortcutsEnabled, undoHistory, redoHistory, canUndo, canRedo]);
+
+  useEffect(() => {
+    if (undoRedoRef.current) {
+      undoRedoRef.current = false;
+      return;
+    }
+    const snapshot = deepClone(projects);
+    setHistoryState((prev) => ({
+      past: [...prev.past, prev.present].slice(-HISTORY_LIMIT),
+      present: snapshot,
+      future: []
+    }));
+  }, [projects]);
 
   // Load projects when user changes (per-user storage)
   useEffect(() => {
@@ -2627,6 +2954,30 @@ const App = () => {
     };
     persist();
   }, [projects, user?.email]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    window.history.replaceState({ view }, "");
+    historySyncRef.current = false;
+
+    const handlePopstate = (event) => {
+      const nextView = event.state?.view || 'landing';
+      historySyncRef.current = true;
+      setView(nextView);
+    };
+
+    window.addEventListener("popstate", handlePopstate);
+    return () => window.removeEventListener("popstate", handlePopstate);
+  }, []);
+
+  useEffect(() => {
+    if (historySyncRef.current) {
+      historySyncRef.current = false;
+      return;
+    }
+    if (typeof window === "undefined") return;
+    window.history.pushState({ view }, "");
+  }, [view]);
 
   useEffect(() => {
     if (isDoorModalOpen) {
@@ -3457,14 +3808,15 @@ const App = () => {
       const operationText = operationPieces.join(". ") + ".";
 
       const context = computeSetContext(doors, items);
-      const sanitizedItems = sanitizeHardwareItems(items, proj.standard, context);
+      const sanitizedItems = sanitizeHardwareItems(items, proj.standard, { ...context, removedAutoTags: [] });
       return {
         id: setID,
         name: `${use} Door (${material}) - ${fire > 0 ? fire + 'min' : 'NFR'}`,
         doors: doors.map(d => d.id),
         intent: packageIntent,
         items: sanitizedItems,
-        operation: operationText
+        operation: operationText,
+        removedAutoTags: []
       };
     });
 
@@ -3490,7 +3842,12 @@ const App = () => {
             newItems[idx] = { ...newItems[idx], [field]: val };
             const doorsInSet = p.doors.filter(d => s.doors.includes(d.id));
             const context = computeSetContext(doorsInSet, newItems);
-            return { ...s, items: sanitizeHardwareItems(newItems, p.standard, context) };
+            const removedAutoTags = s.removedAutoTags ? [...s.removedAutoTags] : [];
+            return {
+              ...s,
+              items: sanitizeHardwareItems(newItems, p.standard, { ...context, removedAutoTags }),
+              removedAutoTags
+            };
           }
           return s;
         });
@@ -3512,7 +3869,15 @@ const App = () => {
       const proj = getProj();
       const newSetId = `HW-${String(proj.sets.length + 1).padStart(2, '0')}`;
       const baseSet = { ...libSet, id: newSetId, doors: [] };
-      const newSet = { ...baseSet, items: sanitizeHardwareItems(baseSet.items || [], proj.standard, computeSetContext([], baseSet.items || [])) };
+      const loadContext = {
+        ...computeSetContext([], baseSet.items || []),
+        removedAutoTags: baseSet.removedAutoTags || []
+      };
+      const newSet = {
+        ...baseSet,
+        items: sanitizeHardwareItems(baseSet.items || [], proj.standard, loadContext),
+        removedAutoTags: baseSet.removedAutoTags || []
+      };
       
       const updatedProjects = projects.map(p => 
         p.id === currentId ? { ...p, sets: [...p.sets, newSet] } : p
@@ -3541,6 +3906,10 @@ const App = () => {
       showNotice("One at a time", "Only one hanging product can be specified per hardware set.");
       return;
     }
+    if (category === "Locks" && targetSet.items.some(i => i.category === "Locks")) {
+      showNotice("One at a time", "Only one locking product can be specified per hardware set.");
+      return;
+    }
 
     const ref = getNextRefForCategory(targetSet.items, category);
 
@@ -3551,9 +3920,11 @@ const App = () => {
             const newItem = { category, ref, type, style: defaultStyle, spec: "", qty: "1", finish: getDefaultFinishForCategory(category, proj.standard) };
             const doorsInSet = p.doors.filter(d => s.doors.includes(d.id));
             const context = computeSetContext(doorsInSet, [...s.items, newItem]);
+            const removedAutoTags = s.removedAutoTags || [];
             return {
               ...s,
-              items: sanitizeHardwareItems([...s.items, newItem], p.standard, context)
+              items: sanitizeHardwareItems([...s.items, newItem], p.standard, { ...context, removedAutoTags }),
+              removedAutoTags
             };
           }
           return s;
@@ -3614,7 +3985,16 @@ const App = () => {
             newItems.splice(idx, 1);
             const doorsInSet = p.doors.filter(d => s.doors.includes(d.id));
             const context = computeSetContext(doorsInSet, newItems);
-            return { ...s, items: sanitizeHardwareItems(newItems, p.standard, context) };
+            const removedAutoTags = s.removedAutoTags ? [...s.removedAutoTags] : [];
+            const itemRemoved = s.items[idx];
+            if (itemRemoved?.autoTag && !removedAutoTags.includes(itemRemoved.autoTag)) {
+              removedAutoTags.push(itemRemoved.autoTag);
+            }
+            return {
+              ...s,
+              items: sanitizeHardwareItems(newItems, p.standard, { ...context, removedAutoTags }),
+              removedAutoTags
+            };
           }
           return s;
         });
@@ -3809,13 +4189,13 @@ const App = () => {
 
           {/* CENTER: Role + status (desktop) */}
           {user && (
-            <div className="flex-1 hidden md:flex items-center justify-center gap-4">
-              <div className="flex items-center gap-2 bg-gray-100 rounded-lg px-2 py-1">
-                <UserCircle size={16} className="text-gray-500" />
+            <div className="flex-1 hidden md:flex items-center justify-center">
+              <div className="inline-flex items-center gap-3 rounded-full border border-gray-200 bg-white px-4 py-1.5 shadow-sm">
+                <UserCircle size={18} className="text-indigo-500" />
                 <select
                   value={userRole}
                   onChange={(e) => setUserRole(e.target.value)}
-                  className="bg-transparent border-none text-sm font-medium focus:ring-0 cursor-pointer"
+                  className="bg-transparent border-none text-sm font-semibold focus:ring-0 cursor-pointer"
                 >
                   <option value="Architect">Architect View</option>
                   <option value="Contractor" disabled>
@@ -3823,11 +4203,6 @@ const App = () => {
                   </option>
                 </select>
               </div>
-              {view === "wizard" && (
-                <span className="text-xs text-gray-400">
-                  {exportStatus || saveStatus}
-                </span>
-              )}
             </div>
           )}
 
@@ -4041,7 +4416,7 @@ const App = () => {
             <span className="px-2 py-0.5 border rounded text-xs md:text-sm text-gray-500 bg-white whitespace-nowrap">{getProj().standard}</span>
             <span className="px-2 py-0.5 border rounded text-xs md:text-sm text-gray-500 bg-white whitespace-nowrap">{getProj().type}</span>
           </div>
-          <div className="flex gap-2 w-full md:w-auto justify-end">
+          <div className="flex gap-2 w-full md:w-auto justify-end items-center">
             <button onClick={() => setShowAuditLog(!showAuditLog)} className="px-3 py-1.5 bg-white border border-gray-200 rounded hover:bg-gray-50 flex items-center gap-2 text-xs md:text-sm">
               <History size={16} /> History
             </button>
@@ -4051,6 +4426,9 @@ const App = () => {
             <button onClick={() => setView('dashboard')} className="px-3 py-1.5 bg-white border border-gray-200 rounded hover:bg-gray-50 flex items-center gap-2 text-xs md:text-sm">
               <X size={16} /> Close
             </button>
+            <span className="text-[11px] md:text-xs text-gray-500 border border-transparent rounded-full px-2 py-0.5 bg-gray-100 whitespace-nowrap">
+              {exportStatus || saveStatus}
+            </span>
           </div>
         </div>
       )}
@@ -4257,25 +4635,46 @@ const App = () => {
                   </select>
                 </div>
               );
+              const handleResidentialUnitMixChange = (type, rawValue) => {
+                const parsed = Math.max(0, parseInt(rawValue, 10) || 0);
+                const currentMix = { ...(facilityInputs.unitMix || RESIDENTIAL_DEFAULT_MIX) };
+                currentMix[type] = parsed;
+                updateInstantInput("unitMix", currentMix);
+                const totalUnits = RESIDENTIAL_UNIT_TYPES.reduce((sum, key) => sum + (currentMix[key] || 0), 0);
+                updateInstantInput("unitsPerFloor", totalUnits);
+              };
               const renderInstantFields = () => {
                 if (facilityType === "Residential") {
+                  const unitMix = facilityInputs.unitMix || RESIDENTIAL_DEFAULT_MIX;
+                  const totalUnitsPerFloor = Math.max(
+                    1,
+                    RESIDENTIAL_UNIT_TYPES.reduce((sum, type) => sum + (unitMix[type] || 0), 0)
+                  );
                   return (
                     <>
                       {numberField("Number of Floors", "floors", 1)}
-                      {numberField("Units per Floor", "unitsPerFloor", 1)}
-                      <div className="flex flex-col gap-1">
-                        <label className="text-xs font-bold uppercase text-gray-500">Unit Type</label>
-                        <select
-                          value={facilityInputs.unitType || "2BHK"}
-                          onChange={(e) => updateInstantInput("unitType", e.target.value)}
-                          className="w-full p-2 border rounded bg-white"
-                        >
-                          <option value="1BHK">1BHK</option>
-                          <option value="2BHK">2BHK</option>
-                          <option value="3BHK">3BHK</option>
-                        </select>
+                      <div className="col-span-full space-y-2">
+                        <p className="text-[11px] text-gray-500">
+                          How many of each unit type sit on a typical floor? This helps group the hardware intent by usage automatically.
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          {RESIDENTIAL_UNIT_TYPES.map((type) => (
+                            <div key={type} className="flex flex-col gap-1">
+                              <label className="text-xs font-bold uppercase text-gray-500">{type} units / floor</label>
+                              <input
+                                type="number"
+                                min={0}
+                                value={unitMix[type] ?? 0}
+                                onChange={(e) => handleResidentialUnitMixChange(type, e.target.value)}
+                                className="w-full p-2 border rounded"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                        <div className="text-[11px] text-gray-500">
+                          Total units per floor: {totalUnitsPerFloor}
+                        </div>
                       </div>
-                      {booleanField("Floors identical?", "identicalFloors")}
                     </>
                   );
                 }
@@ -4758,6 +5157,7 @@ const App = () => {
                                                     const catData = PRODUCT_CATALOG[cat];
                                                     const baseFinishes = FINISHES[getProj().standard];
                                                     let typeOptions = catData?.types || [];
+                                                    const isCardReaderRow = item.autoTag === "card-reader-kit";
                                                     const signalKey = `${s.id}-${originalIndex}`;
                                                     const warningActive = Boolean(lockResetSignals[signalKey]);
                                                     let compatibilityMessage = warningActive ? "Lock type reset: previous lock not compatible with selected material." : null;
@@ -4797,6 +5197,11 @@ const App = () => {
                                                             setTimeout(() => {
                                                                 updateSetItem(s.id, originalIndex, 'type', fallback);
                                                                 triggerLockResetSignal(signalKey);
+                                                                setCompatibilityAlert({
+                                                                  title: "Lock type reset",
+                                                                  message:
+                                                                    "The previously selected lock wasn't compatible with this door material, so the type was updated."
+                                                                });
                                                             }, 0);
                                                             effectiveType = fallback;
                                                             compatibilityMessage = "Lock type reset: previous lock not compatible with selected material/use.";
@@ -4819,8 +5224,8 @@ const App = () => {
                                                     if (cat === 'Electrified') {
                                                         let allowedElectrified = getAllowedElectrifiedTypesForMaterials(setProfile.materials);
                                                         const allowedNames = new Set([...allowedElectrified, ...ELECTRIFIED_AUX_TYPES]);
-                                                        typeOptions = typeOptions.filter(t => allowedNames.has(t.name));
-                                                        if (!typeOptions.some(t => t.name === effectiveType) && typeOptions.length > 0) {
+                                                        typeOptions = typeOptions.filter((t) => allowedNames.has(t.name));
+                                                        if (!typeOptions.some((t) => t.name === effectiveType) && typeOptions.length > 0) {
                                                             const fallback = typeOptions[0].name;
                                                             setTimeout(() => {
                                                                 updateSetItem(s.id, originalIndex, 'type', fallback);
@@ -4828,6 +5233,26 @@ const App = () => {
                                                             }, 0);
                                                             effectiveType = fallback;
                                                             compatibilityMessage = "Electrified option reset for compliance.";
+                                                        }
+                                                        const existingElectrifiedTypes = new Set(
+                                                            s.items
+                                                                .filter((existingItem) => existingItem.category === "Electrified" && existingItem !== item)
+                                                                .map((existingItem) => existingItem.type)
+                                                        );
+                                                        const uniqueLockTypes = new Set(["Magnetic Lock", "Electric Strike"]);
+                                                        typeOptions = typeOptions.filter((t) => {
+                                                            if (
+                                                                uniqueLockTypes.has(t.name) &&
+                                                                existingElectrifiedTypes.has(t.name) &&
+                                                                t.name !== effectiveType
+                                                            ) {
+                                                                return false;
+                                                            }
+                                                            return true;
+                                                        });
+                                                        if (isCardReaderRow) {
+                                                            const cardReaderOnly = ["Card Reader", "Push Button"];
+                                                            typeOptions = typeOptions.filter((t) => cardReaderOnly.includes(t.name));
                                                         }
                                                     }
                                                     if (cat === 'Handles' && requiresGlassPanicHandle) {
@@ -5478,38 +5903,82 @@ const App = () => {
       {/* Add Item Modal */}
       {addItemModal.isOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 sm:p-6">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-5xl flex flex-col max-h-[90vh]">
             <div className="p-4 md:p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50 rounded-t-xl shrink-0">
               <h3 className="text-lg font-bold">Add Hardware Item</h3>
-              <button onClick={() => setAddItemModal({ isOpen: false, setId: null })} className="text-gray-400 hover:text-gray-600"><X size={20}/></button>
+              <button
+                type="button"
+                onClick={() => setAddItemModal({ isOpen: false, setId: null })}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X size={20} />
+              </button>
             </div>
-            <div className="p-4 md:p-6 overflow-y-auto flex-1">
+            <div className="p-4 md:p-6 overflow-hidden flex-1 flex flex-col">
               <div className="bg-orange-50 border border-orange-100 rounded-lg p-3 mb-6 flex gap-3 items-start">
                 <AlertTriangle className="text-orange-600 shrink-0 mt-0.5" size={18} />
                 <p className="text-xs text-orange-800 leading-relaxed">
                   <strong>Code Compliance Warning:</strong> Adding manual items may affect the fire rating.
                 </p>
               </div>
-              <div className="space-y-4">
-                {Object.entries(PRODUCT_CATALOG).map(([category, data]) => (
-                  <div key={category}>
-                    <div className="flex justify-between items-center mb-2">
-                         <h4 className="text-xs font-bold text-gray-500 uppercase">{getBHMACategory(category)} - {category}</h4>
-                         <span className="text-[10px] text-gray-300 font-mono">{data.csi}</span>
+              <div className="flex-1 overflow-y-auto">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-gray-500 mb-4">
+                  Choose a category below
+                </p>
+                <div className="grid gap-4 xl:grid-cols-4 lg:grid-cols-2">
+                  {HARDWARE_GROUP_COLUMNS.map((group) => (
+                    <div key={group.id} className="flex flex-col h-full rounded-3xl border border-gray-100 bg-white shadow-sm overflow-hidden">
+                      <div className="px-4 py-3 border-b border-gray-100">
+                        <div className="text-[10px] uppercase tracking-[0.4em] text-gray-400">{group.label}</div>
+                        <p className="text-sm font-semibold text-gray-900">{group.description}</p>
+                      </div>
+                      <div className="flex-1 px-3 py-3 space-y-3 overflow-y-auto">
+                        {group.items.length === 0 ? (
+                          <p className="text-xs text-gray-500">No entries yet.</p>
+                        ) : (
+                          group.items.map((item) => (
+                            <button
+                              key={`${item.category}-${item.name}`}
+                              type="button"
+                              onClick={() => addNewItem(item.category, item.name)}
+                              className="w-full text-left rounded-2xl border border-gray-100 px-3 py-2 transition hover:border-indigo-200 hover:bg-indigo-50"
+                            >
+                              <div className="text-sm font-semibold text-gray-900">{item.name}</div>
+                              <div className="text-[11px] text-gray-500">{item.description || "Layman-friendly details"}</div>
+                              <div className="text-[10px] text-gray-400 font-mono mt-1">{item.csi}</div>
+                            </button>
+                          ))
+                        )}
+                      </div>
                     </div>
-                    <div className="grid grid-cols-1 gap-2">
-                      {data.types.map((type) => (
-                        <button key={type.name} onClick={() => addNewItem(category, type.name)} className="text-left px-4 py-3 border border-gray-100 rounded hover:border-indigo-600 hover:bg-indigo-50 transition-colors group w-full">
-                          <div className="font-medium text-gray-800 group-hover:text-indigo-600">{type.name}</div>
-                          <div className="text-xs text-gray-500 truncate flex gap-2">
-                              {type.styles.slice(0, 2).join(", ")}...
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {compatibilityAlert && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl text-gray-900 relative">
+            <button
+              type="button"
+              onClick={() => setCompatibilityAlert(null)}
+              className="absolute top-3 right-3 text-gray-400 hover:text-gray-600"
+            >
+              <X size={16} />
+            </button>
+            <h4 className="text-lg font-bold mb-2">{compatibilityAlert.title || "Notice"}</h4>
+            <p className="text-sm text-gray-600 mb-4">{compatibilityAlert.message}</p>
+            <div className="text-right">
+              <button
+                type="button"
+                onClick={() => setCompatibilityAlert(null)}
+                className="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700"
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>
