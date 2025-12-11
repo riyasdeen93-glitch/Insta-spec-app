@@ -1,5 +1,5 @@
 // src/components/BetaAdminPanel.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   X,
   Mail,
@@ -25,7 +25,8 @@ import {
   getDownloadUsage,
   extendBetaUserExpiry,
   extendDownloadLimit,
-  MASTER_ADMIN_CODE
+  MASTER_ADMIN_CODE,
+  getLoginCountMap
 } from "../auth/betaAccess";
 
 const formatRelativeTime = (timestamp) => {
@@ -61,6 +62,7 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
   const [usageMap, setUsageMap] = useState({});
   const [extensionInputs, setExtensionInputs] = useState({});
   const [actionLoading, setActionLoading] = useState({});
+  const [loginCounts, setLoginCounts] = useState({});
   const statusTimeout = useRef(null);
 
   useEffect(() => {
@@ -114,6 +116,10 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
       ? expiredUsers
       : expiringUsers;
 
+  const refreshLoginCounts = useCallback(() => {
+    setLoginCounts(getLoginCountMap());
+  }, []);
+
   useEffect(() => {
     if (!isOpen) return;
     setStatus(null);
@@ -126,13 +132,14 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
     refreshUsers();
     refreshAccessRequests();
     refreshFeedback();
+    refreshLoginCounts();
     return () => {
       if (statusTimeout.current) {
         clearTimeout(statusTimeout.current);
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);
+  }, [isOpen, refreshLoginCounts]);
 
   const showStatus = (message, tone = "success") => {
     const key = Date.now();
@@ -644,6 +651,10 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
                       : "text-gray-500";
                     const expiryActionKey = `expiry:${user.email}`;
                     const downloadActionKey = `downloads:${user.email}`;
+                    const loginCount =
+                      typeof user.loginCount === "number"
+                        ? user.loginCount
+                        : loginCounts[user.email] || 0;
                     return (
                       <div
                         key={user.email}
@@ -670,6 +681,7 @@ const BetaAdminPanel = ({ isOpen, onClose }) => {
                               Downloads:{" "}
                               {user.isAdmin ? "Unlimited" : `${usage.count} / ${usage.limit}`}
                             </div>
+                            <div className="text-xs text-gray-500 mt-1">Logins: {loginCount}</div>
                             <div className="mt-3 space-y-2">
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className="text-[11px] font-semibold text-gray-600 uppercase">Extend expiry</span>

@@ -234,7 +234,14 @@ export function isAdminEmail(rawEmail) {
   const email = normalizeEmail(rawEmail);
   if (!email) return false;
   if (betaUserCache.has(email)) {
-    return Boolean(betaUserCache.get(email)?.isAdmin);
+    const cached = betaUserCache.get(email) || {};
+    if (typeof cached.isAdmin === "boolean") {
+      return cached.isAdmin;
+    }
+    return (
+      ADMIN_EMAILS.includes(email) ||
+      String(cached.plan || "").toLowerCase() === "beta_admin"
+    );
   }
   return ADMIN_EMAILS.includes(email);
 }
@@ -245,6 +252,14 @@ const loginLogStore = readJSON(STORAGE_KEYS.loginLog, []);
 
 const persistLoginLog = () => writeJSON(STORAGE_KEYS.loginLog, loginLogStore);
 const getLoginStatsDocRef = () => doc(db, "betaMetadata", "loginStats");
+export const getLoginCountMap = () => {
+  return loginLogStore.reduce((acc, entry) => {
+    const email = normalizeEmail(entry?.email);
+    if (!email) return acc;
+    acc[email] = (acc[email] || 0) + 1;
+    return acc;
+  }, {});
+};
 const appendLoginLogToServer = async (entry) => {
   try {
     await addDoc(collection(db, BETA_LOGIN_LOG_COLLECTION), entry);
@@ -300,7 +315,7 @@ export const fetchLoginStats = async (options = {}) => {
   }
 };
 
-export const recordSuccessfulLogin = (email, isAdmin) => {
+export async function recordSuccessfulLogin(email, isAdmin) {
   if (!email) return;
   const entry = {
     email: normalizeEmail(email),
@@ -313,6 +328,15 @@ export const recordSuccessfulLogin = (email, isAdmin) => {
   }
   persistLoginLog();
   appendLoginLogToServer(entry);
+  try {
+    await setDoc(
+      doc(db, "betaUsers", entry.email),
+      { loginCount: increment(1) },
+      { merge: true }
+    );
+  } catch (err) {
+    console.warn("Failed to increment loginCount", err);
+  }
 };
 
 export const hasLoggedInBefore = (rawEmail) => {
