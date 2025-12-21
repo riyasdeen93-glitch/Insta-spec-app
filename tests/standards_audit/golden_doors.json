@@ -1,0 +1,127 @@
+{
+  "validationScenarios": [
+    {
+      "id": "fire_door_missing_closer_and_seal",
+      "description": "Fire-rated opening without closer or seals triggers critical issues.",
+      "project": {
+        "doors": [
+          { "id": "d1", "use": "Corridor / Fire Separation", "material": "Metal", "fire": 60 }
+        ],
+        "sets": [
+          {
+            "id": "HW-01",
+            "doors": ["d1"],
+            "items": [
+              { "category": "Hinges", "type": "Butt Hinge", "ref": "H01" },
+              { "category": "Locks", "type": "Mortise Lock", "ref": "L01" }
+            ]
+          }
+        ]
+      },
+      "expectedIssues": [
+        "Fire Rated set HW-01 is missing a Door Closer.",
+        "Fire Rated set HW-01 requires perimeter/drop seals."
+      ]
+    },
+    {
+      "id": "stair_exit_missing_panic",
+      "description": "Egress door without panic hardware is flagged.",
+      "project": {
+        "doors": [
+          { "id": "d2", "use": "Stairwell / Exit", "material": "Metal", "fire": 0 }
+        ],
+        "sets": [
+          {
+            "id": "HW-02",
+            "doors": ["d2"],
+            "items": [
+              { "category": "Hinges", "type": "Butt Hinge", "ref": "H01" },
+              { "category": "Closers", "type": "Overhead Closer", "ref": "D01" }
+            ]
+          }
+        ]
+      },
+      "expectedIssues": [
+        "Stair/Exit set HW-02 is missing Panic Hardware."
+      ]
+    },
+    {
+      "id": "glass_needs_patch",
+      "description": "Glass doors without patch fittings should raise a warning.",
+      "project": {
+        "doors": [
+          { "id": "d3", "use": "Main Entrance", "material": "Glass", "fire": 0 }
+        ],
+        "sets": [
+          {
+            "id": "HW-03",
+            "doors": ["d3"],
+            "items": [
+              { "category": "Handles", "type": "Pull Handle", "ref": "H01" }
+            ]
+          }
+        ]
+      },
+      "expectedIssues": [
+        "Glass door set HW-03 might need Patch Fittings or Rails."
+      ]
+    }
+  ],
+  "hardwareSanitizeScenarios": [
+    {
+      "id": "maglock_supports_added",
+      "description": "Maglocks auto-add support kit and card reader when not removed.",
+      "standard": "ANSI",
+      "items": [
+        {
+          "category": "Electrified",
+          "ref": "E01",
+          "type": "Magnetic Lock",
+          "style": "Surface Mount",
+          "qty": "1",
+          "finish": "630 (Satin Stainless)"
+        }
+      ],
+      "context": { "setId": "HW-10", "removedAutoTags": [] },
+      "expectedTypes": [
+        "Magnetic Lock",
+        "Door Contact",
+        "Power Supply",
+        "Card Reader"
+      ]
+    },
+    {
+      "id": "acoustic_auto_package",
+      "description": "High STC paired opening auto-adds acoustic package and glazing gasket.",
+      "standard": "ANSI",
+      "doors": [
+        { "id": "d8", "stc": 42, "config": "Double", "visionPanel": true }
+      ],
+      "items": [
+        {
+          "category": "Hinges",
+          "ref": "H01",
+          "type": "Butt Hinge",
+          "style": "Ball Bearing",
+          "qty": "6",
+          "finish": "630 (Satin Stainless)"
+        }
+      ],
+      "expectedAutoTags": ["acoustic-package"]
+    }
+  ],
+  "classificationSamples": [
+    {
+      "id": "stair_fire_door",
+      "description": "Stair/exit with fire rating requires panic and fail-safe.",
+      "door": { "id": "d100", "use": "Stairwell / Exit", "fire": 90, "material": "Metal" },
+      "expected": { "isEscapeRoute": true, "requiresPanic": true, "isFireRated": true, "requiresFailSafe": true }
+    },
+    {
+      "id": "glass_non_fire",
+      "description": "Non-fire glass passage should not flag egress requirements.",
+      "door": { "id": "d101", "use": "Office / Passage", "fire": 0, "material": "Glass" },
+      "expected": { "isEscapeRoute": false, "requiresPanic": false, "isFireRated": false, "requiresFailSafe": false }
+    }
+  ]
+}

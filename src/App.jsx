@@ -16,6 +16,8 @@ import {
   Lock, Settings, MousePointer, Power, Printer, FileText, Volume2, Scale,
   BookOpen, UploadCloud, Wand2, ShieldCheck, Wrench, RefreshCw, Zap, MessageSquare
 } from 'lucide-react';
+import { traceRuleEvent, traceSetEvent, STANDARDS_TRACE_ENABLED } from "./standards/trace";
+import { evaluateSetValidationIssues } from "./standards/validation";
 
 // --- UTILS ---
 
@@ -1049,7 +1051,7 @@ const classifyDoor = (door) => {
   const requiresPanic = PANIC_REQUIRED_KEYWORDS.some((kw) => use.includes(kw));
   const isFireRated = parseInt(door.fire, 10) > 0;
   const hardwareIntent = door.hardwareIntent || getRecommendedHardwareIntent(door);
-  return {
+  const result = {
     material,
     isEscapeRoute,
     requiresPanic,
@@ -1057,6 +1059,12 @@ const classifyDoor = (door) => {
     requiresFailSafe: isEscapeRoute || isFireRated,
     hardwareIntent
   };
+  traceRuleEvent(door.id || door.mark || "door-unknown", "classifyDoor", {
+    use: door.use,
+    fire: door.fire,
+    result
+  });
+  return result;
 };
 
 const buildSetProfile = (doors = []) => {
@@ -1390,7 +1398,13 @@ const computeSetContext = (doors = [], items = []) => {
   const isDouble = doors.some((d) => d.config === 'Double');
   const hasVision = doors.some((d) => d.visionPanel);
   const hasLouver = items.some((item) => (item.type || "").toLowerCase().includes("louver"));
-  return { needsAcoustic, isDouble, hasVision, hasLouver };
+  const context = { needsAcoustic, isDouble, hasVision, hasLouver };
+  traceSetEvent(
+    "context",
+    "computeSetContext",
+    { doors: doors.map((d) => d.id || d.mark || "door-unknown"), ...context }
+  );
+  return context;
 };
 
 const applyFinishOverrides = (items = [], standard = "ANSI") => {
@@ -1407,7 +1421,17 @@ const sanitizeHardwareItems = (items = [], standard = "ANSI", context = {}) => {
   const afterMaglock = ensureElectrifiedSupportItems(items, standard);
   const afterHinge = enforceSingleHinge(afterMaglock);
   const afterAcoustic = ensureAcousticItems(afterHinge, { ...context, standard });
-  return applyFinishOverrides(afterAcoustic, standard);
+  const finalItems = applyFinishOverrides(afterAcoustic, standard);
+  traceSetEvent(
+    context.setId || "set-unknown",
+    "sanitizeHardwareItems",
+    {
+      standard,
+      autoTags: finalItems.filter((item) => item.autoTag).map((item) => item.autoTag),
+      total: finalItems.length
+    }
+  );
+  return finalItems;
 };
 
 const usePrefersReducedMotion = () => {
@@ -1573,7 +1597,8 @@ const normalizeProject = (project) => {
       const baseItems = set.items || [];
       const context = {
         ...computeSetContext(doorsForSet, baseItems),
-        removedAutoTags: set.removedAutoTags || []
+        removedAutoTags: set.removedAutoTags || [],
+        setId: set.id
       };
       const normalizedItems = sanitizeHardwareItems(baseItems, project.standard, context);
       return {
@@ -3465,6 +3490,13 @@ const App = () => {
       note = { type: 'info', msg: "Cross-corridor doors often require smoke/fire control." };
     }
 
+    if (note && STANDARDS_TRACE_ENABLED) {
+      traceRuleEvent(doorForm.id || doorForm.mark || "door-form", "checkCompliance", {
+        use: doorForm.use,
+        fire: doorForm.fire,
+        note
+      });
+    }
     setComplianceNote(note);
   };
 
@@ -3808,7 +3840,7 @@ const App = () => {
       const operationText = operationPieces.join(". ") + ".";
 
       const context = computeSetContext(doors, items);
-      const sanitizedItems = sanitizeHardwareItems(items, proj.standard, { ...context, removedAutoTags: [] });
+      const sanitizedItems = sanitizeHardwareItems(items, proj.standard, { ...context, removedAutoTags: [], setId: setID });
       return {
         id: setID,
         name: `${use} Door (${material}) - ${fire > 0 ? fire + 'min' : 'NFR'}`,
@@ -3845,7 +3877,7 @@ const App = () => {
             const removedAutoTags = s.removedAutoTags ? [...s.removedAutoTags] : [];
             return {
               ...s,
-              items: sanitizeHardwareItems(newItems, p.standard, { ...context, removedAutoTags }),
+              items: sanitizeHardwareItems(newItems, p.standard, { ...context, removedAutoTags, setId }),
               removedAutoTags
             };
           }
@@ -3871,7 +3903,8 @@ const App = () => {
       const baseSet = { ...libSet, id: newSetId, doors: [] };
       const loadContext = {
         ...computeSetContext([], baseSet.items || []),
-        removedAutoTags: baseSet.removedAutoTags || []
+        removedAutoTags: baseSet.removedAutoTags || [],
+        setId: newSetId
       };
       const newSet = {
         ...baseSet,
@@ -3923,7 +3956,7 @@ const App = () => {
             const removedAutoTags = s.removedAutoTags || [];
             return {
               ...s,
-              items: sanitizeHardwareItems([...s.items, newItem], p.standard, { ...context, removedAutoTags }),
+              items: sanitizeHardwareItems([...s.items, newItem], p.standard, { ...context, removedAutoTags, setId: s.id }),
               removedAutoTags
             };
           }
@@ -3992,7 +4025,7 @@ const App = () => {
             }
             return {
               ...s,
-              items: sanitizeHardwareItems(newItems, p.standard, { ...context, removedAutoTags }),
+              items: sanitizeHardwareItems(newItems, p.standard, { ...context, removedAutoTags, setId }),
               removedAutoTags
             };
           }
@@ -4006,36 +4039,8 @@ const App = () => {
   };
 
   const getValidationIssues = () => {
-      const proj = getProj();
-      const issues = [];
-      
-      proj.sets.forEach(s => {
-          const doorsInSet = proj.doors.filter(d => s.doors.includes(d.id));
-          const isFireRated = doorsInSet.some(d => d.fire > 0);
-          const isStair = doorsInSet.some(d => d.use.toLowerCase().includes('stair') || d.use.toLowerCase().includes('exit'));
-          const isGlass = doorsInSet.some(d => d.material === 'Glass');
-
-          // Check 1: Fire Door Missing Closer
-          if (isFireRated) {
-              const hasCloser = s.items.some(i => i.category === 'Closers');
-              if (!hasCloser) issues.push({ set: s.id, type: 'critical', msg: `Fire Rated set ${s.id} is missing a Door Closer.` });
-              const hasSeal = s.items.some(i => i.category === 'Seals');
-              if (!hasSeal) issues.push({ set: s.id, type: 'critical', msg: `Fire Rated set ${s.id} requires perimeter/drop seals.` });
-          }
-
-          // Check 2: Stair/Exit Missing Panic
-          if (isStair) {
-              const hasPanic = s.items.some(i => i.type.includes('Panic'));
-              if (!hasPanic) issues.push({ set: s.id, type: 'critical', msg: `Stair/Exit set ${s.id} is missing Panic Hardware.` });
-          }
-
-          // Check 3: Glass Door Specs
-          if (isGlass) {
-              const hasPatch = s.items.some(i => i.type.includes('Patch') || i.type.includes('Rail'));
-              if (!hasPatch) issues.push({ set: s.id, type: 'warning', msg: `Glass door set ${s.id} might need Patch Fittings or Rails.` });
-          }
-      });
-      return issues;
+    const proj = getProj();
+    return evaluateSetValidationIssues(proj);
   };
 
   // --- VIEWS ---
@@ -4184,7 +4189,7 @@ const App = () => {
           >
             <DoorClosed className="text-indigo-600" />
             <span>InstaSpec</span>
-            <span className="text-xs text-gray-400 font-normal ml-1">v1.4 Beta</span>
+            <span className="text-xs text-gray-400 font-normal ml-1">v1.5 Beta</span>
           </button>
 
           {/* CENTER: Role + status (desktop) */}
@@ -6104,4 +6109,15 @@ const App = () => {
   );
 };
 
+export {
+  generateInstantDoorSchedule,
+  classifyDoor,
+  buildSetProfile,
+  computeSetContext,
+  sanitizeHardwareItems,
+  getAllowedLockTypesForMaterials,
+  getAllowedElectrifiedTypesForMaterials,
+  ensureElectrifiedSupportItems,
+  getRecommendedHardwareIntent
+};
 export default App;
