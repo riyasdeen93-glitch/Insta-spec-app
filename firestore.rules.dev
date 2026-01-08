@@ -1,0 +1,51 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================
+    // DEVELOPMENT RULES - PERMISSIVE FOR TESTING
+    // ============================================
+    // WARNING: These rules are for development ONLY
+    // DO NOT deploy these to production (InstaSpec-DHW)
+    // ============================================
+
+    // Development mode - allow all operations but with basic validation
+    // This helps you test your app without authentication barriers
+
+    match /betaUsers/{email} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /projects/{projectId} {
+      allow read: if true;
+      allow write: if request.resource.data.keys().hasAll(['ownerEmail', 'updatedAt']);
+    }
+
+    match /feedback/{feedbackId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['email', 'message', 'createdAt']);
+      allow update, delete: if false; // Keep immutable even in dev
+    }
+
+    match /betaLoginLogs/{logId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['email', 'timestamp']);
+      allow update, delete: if false;
+    }
+
+    match /betaMetadata/{docId} {
+      allow read, write: if true;
+    }
+
+    match /betaUsage/{email} {
+      allow read, write: if true;
+    }
+
+    // Allow all other collections in development
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

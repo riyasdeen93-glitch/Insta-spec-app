@@ -1,0 +1,192 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================
+    // HELPER FUNCTIONS
+    // ============================================
+
+    // Check if user is authenticated (has valid beta access)
+    function isAuthenticated() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+
+    // Normalize and get user email
+    function getUserEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    // Check if user is admin
+    function isAdmin() {
+      return isAuthenticated() &&
+             exists(/databases/$(database)/documents/betaUsers/$(getUserEmail())) &&
+             get(/databases/$(database)/documents/betaUsers/$(getUserEmail())).data.isAdmin == true;
+    }
+
+    // Check if beta user exists and is not expired
+    function isValidBetaUser() {
+      let userDoc = get(/databases/$(database)/documents/betaUsers/$(getUserEmail()));
+      return userDoc.data.expiresAt == null || userDoc.data.expiresAt > request.time.toMillis();
+    }
+
+    // Validate email format
+    function isValidEmail(email) {
+      return email.matches('^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$');
+    }
+
+    // Check if resource belongs to user
+    function isOwner(email) {
+      return isAuthenticated() && getUserEmail() == email.lower();
+    }
+
+    // ============================================
+    // BETA USERS COLLECTION
+    // ============================================
+    match /betaUsers/{email} {
+      // Allow read if user is reading their own document or is admin
+      allow read: if isAuthenticated() && (
+        getUserEmail() == email.lower() || isAdmin()
+      );
+
+      // Only admins can create/update/delete beta users
+      allow create, update: if isAdmin() &&
+        request.resource.data.keys().hasAll(['email', 'code', 'plan', 'isAdmin', 'updatedAt', 'createdAt']) &&
+        isValidEmail(request.resource.data.email) &&
+        request.resource.data.email.lower() == email.lower() &&
+        request.resource.data.plan in ['beta_tester', 'beta_admin'] &&
+        request.resource.data.isAdmin is bool &&
+        (request.resource.data.expiresAt == null || request.resource.data.expiresAt is int);
+
+      allow delete: if isAdmin();
+
+      // Allow users to increment their own loginCount
+      allow update: if isAuthenticated() &&
+        getUserEmail() == email.lower() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['loginCount']) &&
+        request.resource.data.loginCount == resource.data.loginCount + 1;
+    }
+
+    // ============================================
+    // PROJECTS COLLECTION
+    // ============================================
+    match /projects/{projectId} {
+      // Allow read if user owns the project or is admin
+      allow read: if isAuthenticated() && (
+        resource.data.ownerEmail.lower() == getUserEmail() || isAdmin()
+      );
+
+      // Allow create if user is authenticated and sets themselves as owner
+      allow create: if isAuthenticated() &&
+        isValidBetaUser() &&
+        request.resource.data.keys().hasAll(['ownerEmail', 'updatedAt', 'createdAt']) &&
+        request.resource.data.ownerEmail.lower() == getUserEmail() &&
+        request.resource.data.createdAt is int &&
+        request.resource.data.updatedAt is int;
+
+      // Allow update if user owns the project and maintains ownership
+      allow update: if isAuthenticated() &&
+        resource.data.ownerEmail.lower() == getUserEmail() &&
+        request.resource.data.ownerEmail.lower() == getUserEmail() &&
+        request.resource.data.updatedAt is int;
+
+      // Allow delete if user owns the project or is admin
+      allow delete: if isAuthenticated() && (
+        resource.data.ownerEmail.lower() == getUserEmail() || isAdmin()
+      );
+    }
+
+    // ============================================
+    // FEEDBACK COLLECTION
+    // ============================================
+    match /feedback/{feedbackId} {
+      // Only admins can read feedback
+      allow read: if isAdmin();
+
+      // Any authenticated beta user can submit feedback
+      allow create: if isAuthenticated() &&
+        isValidBetaUser() &&
+        request.resource.data.keys().hasAll(['email', 'context', 'message', 'createdAt']) &&
+        request.resource.data.email.lower() == getUserEmail() &&
+        isValidEmail(request.resource.data.email) &&
+        request.resource.data.message is string &&
+        request.resource.data.message.size() > 0 &&
+        request.resource.data.message.size() <= 5000 &&
+        request.resource.data.createdAt is int &&
+        (
+          !request.resource.data.keys().hasAny(['imageDataUrl']) ||
+          request.resource.data.imageDataUrl == null ||
+          (request.resource.data.imageDataUrl is string && request.resource.data.imageDataUrl.size() <= 5000000)
+        );
+
+      // No updates or deletes allowed (feedback is immutable)
+      allow update, delete: if false;
+    }
+
+    // ============================================
+    // BETA LOGIN LOGS COLLECTION
+    // ============================================
+    match /betaLoginLogs/{logId} {
+      // Only admins can read login logs
+      allow read: if isAdmin();
+
+      // System can create login logs (validated on server)
+      allow create: if isAuthenticated() &&
+        request.resource.data.keys().hasAll(['email', 'isAdmin', 'timestamp']) &&
+        request.resource.data.email.lower() == getUserEmail() &&
+        request.resource.data.timestamp is int &&
+        request.resource.data.isAdmin is bool;
+
+      // No updates or deletes
+      allow update, delete: if false;
+    }
+
+    // ============================================
+    // BETA METADATA COLLECTION
+    // ============================================
+    match /betaMetadata/{docId} {
+      // Only admins can read metadata
+      allow read: if isAdmin();
+
+      // Allow authenticated users to increment totalLogins in loginStats doc
+      allow update: if isAuthenticated() &&
+        docId == 'loginStats' &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['totalLogins']) &&
+        request.resource.data.totalLogins == resource.data.totalLogins + 1;
+
+      // Admins can write metadata
+      allow write: if isAdmin();
+    }
+
+    // ============================================
+    // BETA USAGE COLLECTION (Download tracking)
+    // ============================================
+    match /betaUsage/{email} {
+      // Users can read their own usage, admins can read all
+      allow read: if isAuthenticated() && (
+        getUserEmail() == email.lower() || isAdmin()
+      );
+
+      // Users can update their own usage (via transaction in code)
+      allow write: if isAuthenticated() &&
+        getUserEmail() == email.lower() &&
+        request.resource.data.keys().hasAll(['email', 'count', 'limit', 'updatedAt']) &&
+        request.resource.data.email.lower() == email.lower() &&
+        request.resource.data.count is int &&
+        request.resource.data.limit is int &&
+        request.resource.data.updatedAt is int &&
+        request.resource.data.count >= 0 &&
+        request.resource.data.limit > 0;
+
+      // Admins can write to any usage document
+      allow write: if isAdmin();
+    }
+
+    // ============================================
+    // DENY ALL OTHER COLLECTIONS
+    // ============================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

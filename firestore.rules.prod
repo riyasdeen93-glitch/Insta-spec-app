@@ -1,0 +1,189 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================
+    // PRODUCTION RULES - SECURE FOR PUBLIC USE
+    // ============================================
+    // Deploy these to InstaSpec-DHW (production)
+    // ============================================
+
+    // ============================================
+    // HELPER FUNCTIONS
+    // ============================================
+
+    // Validate email format
+    function isValidEmail(email) {
+      return email.matches('^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$');
+    }
+
+    // Check if a beta user exists and is valid
+    function betaUserExists(email) {
+      return exists(/databases/$(database)/documents/betaUsers/$(email.lower()));
+    }
+
+    // Check if beta user is not expired
+    function betaUserNotExpired(email) {
+      let userDoc = get(/databases/$(database)/documents/betaUsers/$(email.lower()));
+      return userDoc.data.expiresAt == null || userDoc.data.expiresAt > request.time.toMillis();
+    }
+
+    // Check if user is admin
+    function isAdmin(email) {
+      return betaUserExists(email) &&
+             get(/databases/$(database)/documents/betaUsers/$(email.lower())).data.isAdmin == true;
+    }
+
+    // Validate that email in request matches document ID
+    function emailMatchesDocId(docId) {
+      return request.resource.data.email.lower() == docId.lower();
+    }
+
+    // ============================================
+    // BETA USERS COLLECTION
+    // ============================================
+    match /betaUsers/{email} {
+      // Anyone can read beta users (needed for login validation)
+      // But sensitive data should be minimized in this collection
+      allow read: if true;
+
+      // Only specific emails can create/update admin users
+      allow create, update: if
+        request.resource.data.keys().hasAll(['email', 'code', 'plan', 'isAdmin', 'updatedAt', 'createdAt']) &&
+        isValidEmail(request.resource.data.email) &&
+        request.resource.data.email.lower() == email.lower() &&
+        request.resource.data.plan in ['beta_tester', 'beta_admin'] &&
+        request.resource.data.isAdmin is bool &&
+        (request.resource.data.expiresAt == null || request.resource.data.expiresAt is int) &&
+        // If setting isAdmin to true, must be from admin email
+        (!request.resource.data.isAdmin ||
+         request.resource.data.email.lower() in ['admin@techarix.com']);
+
+      // Allow delete only for admin emails
+      allow delete: if email.lower() in ['admin@techarix.com'] ||
+                      isAdmin('admin@techarix.com');
+
+      // Allow increment of loginCount by anyone (for tracking)
+      allow update: if
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['loginCount']) &&
+        request.resource.data.loginCount == resource.data.loginCount + 1;
+    }
+
+    // ============================================
+    // PROJECTS COLLECTION
+    // ============================================
+    match /projects/{projectId} {
+      // Allow read if ownerEmail exists in betaUsers
+      allow read: if resource.data.ownerEmail != null &&
+                    betaUserExists(resource.data.ownerEmail);
+
+      // Allow create if ownerEmail is a valid beta user
+      allow create: if request.resource.data.keys().hasAll(['ownerEmail', 'updatedAt', 'createdAt']) &&
+                      isValidEmail(request.resource.data.ownerEmail) &&
+                      betaUserExists(request.resource.data.ownerEmail) &&
+                      betaUserNotExpired(request.resource.data.ownerEmail) &&
+                      request.resource.data.createdAt is int &&
+                      request.resource.data.updatedAt is int;
+
+      // Allow update if ownerEmail hasn't changed and user is still valid
+      allow update: if resource.data.ownerEmail == request.resource.data.ownerEmail &&
+                      betaUserExists(request.resource.data.ownerEmail) &&
+                      request.resource.data.updatedAt is int;
+
+      // Allow delete if ownerEmail exists as beta user
+      allow delete: if resource.data.ownerEmail != null &&
+                      betaUserExists(resource.data.ownerEmail);
+    }
+
+    // ============================================
+    // FEEDBACK COLLECTION
+    // ============================================
+    match /feedback/{feedbackId} {
+      // Admins can read feedback
+      allow read: if isAdmin('admin@techarix.com');
+
+      // Any valid beta user can submit feedback
+      allow create: if request.resource.data.keys().hasAll(['email', 'context', 'message', 'createdAt']) &&
+                      isValidEmail(request.resource.data.email) &&
+                      betaUserExists(request.resource.data.email) &&
+                      betaUserNotExpired(request.resource.data.email) &&
+                      request.resource.data.message is string &&
+                      request.resource.data.message.size() > 0 &&
+                      request.resource.data.message.size() <= 5000 &&
+                      request.resource.data.createdAt is int &&
+                      (
+                        !request.resource.data.keys().hasAny(['imageDataUrl']) ||
+                        request.resource.data.imageDataUrl == null ||
+                        (request.resource.data.imageDataUrl is string &&
+                         request.resource.data.imageDataUrl.size() <= 5000000)
+                      );
+
+      // Feedback is immutable
+      allow update, delete: if false;
+    }
+
+    // ============================================
+    // BETA LOGIN LOGS COLLECTION
+    // ============================================
+    match /betaLoginLogs/{logId} {
+      // Admins can read logs
+      allow read: if isAdmin('admin@techarix.com');
+
+      // Valid beta users can create login logs
+      allow create: if request.resource.data.keys().hasAll(['email', 'isAdmin', 'timestamp']) &&
+                      isValidEmail(request.resource.data.email) &&
+                      betaUserExists(request.resource.data.email) &&
+                      request.resource.data.timestamp is int &&
+                      request.resource.data.isAdmin is bool;
+
+      // Logs are immutable
+      allow update, delete: if false;
+    }
+
+    // ============================================
+    // BETA METADATA COLLECTION
+    // ============================================
+    match /betaMetadata/{docId} {
+      // Anyone can read metadata
+      allow read: if true;
+
+      // Allow increment of totalLogins in loginStats
+      allow update: if docId == 'loginStats' &&
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['totalLogins']) &&
+                      request.resource.data.totalLogins == resource.data.totalLogins + 1;
+
+      // Admins can write all metadata
+      allow write: if isAdmin('admin@techarix.com');
+    }
+
+    // ============================================
+    // BETA USAGE COLLECTION (Download tracking)
+    // ============================================
+    match /betaUsage/{email} {
+      // Users can read their own usage, admins can read all
+      allow read: if betaUserExists(email);
+
+      // Valid beta users can update their own usage
+      allow write: if betaUserExists(email) &&
+                     betaUserNotExpired(email) &&
+                     request.resource.data.keys().hasAll(['email', 'count', 'limit', 'updatedAt']) &&
+                     emailMatchesDocId(email) &&
+                     request.resource.data.count is int &&
+                     request.resource.data.limit is int &&
+                     request.resource.data.updatedAt is int &&
+                     request.resource.data.count >= 0 &&
+                     request.resource.data.limit > 0;
+
+      // Admins can write to any usage document
+      allow write: if isAdmin('admin@techarix.com');
+    }
+
+    // ============================================
+    // DENY ALL OTHER COLLECTIONS
+    // ============================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

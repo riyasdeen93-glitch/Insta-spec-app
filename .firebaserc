@@ -1,0 +1,6 @@
+{
+  "projects": {
+    "dev": "instaspec-dev",
+    "prod": "instaspec-dhw"
+  }
+}

@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Firestore Security Test</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 1200px;
+      margin: 40px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    h1 { color: #333; }
+    .test-section {
+      background: white;
+      padding: 20px;
+      margin: 20px 0;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .test-case {
+      margin: 15px 0;
+      padding: 15px;
+      border-left: 4px solid #ddd;
+      background: #f9f9f9;
+    }
+    .test-case.success {
+      border-left-color: #22c55e;
+      background: #f0fdf4;
+    }
+    .test-case.error {
+      border-left-color: #ef4444;
+      background: #fef2f2;
+    }
+    .test-case.running {
+      border-left-color: #3b82f6;
+      background: #eff6ff;
+    }
+    button {
+      background: #3b82f6;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 16px;
+      margin: 10px 10px 10px 0;
+    }
+    button:hover {
+      background: #2563eb;
+    }
+    button:disabled {
+      background: #94a3b8;
+      cursor: not-allowed;
+    }
+    .code {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 12px;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+      font-size: 14px;
+      overflow-x: auto;
+      margin: 10px 0;
+    }
+    .status {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .status.pass { background: #22c55e; color: white; }
+    .status.fail { background: #ef4444; color: white; }
+    .status.running { background: #3b82f6; color: white; }
+    .summary {
+      display: flex;
+      gap: 20px;
+      margin: 20px 0;
+    }
+    .summary-item {
+      flex: 1;
+      padding: 20px;
+      border-radius: 8px;
+      text-align: center;
+    }
+    .summary-item h3 {
+      margin: 0 0 10px 0;
+      font-size: 14px;
+      text-transform: uppercase;
+      opacity: 0.8;
+    }
+    .summary-item .count {
+      font-size: 36px;
+      font-weight: bold;
+      margin: 0;
+    }
+    .info {
+      background: #dbeafe;
+      border: 1px solid #3b82f6;
+      padding: 15px;
+      border-radius: 6px;
+      margin: 20px 0;
+    }
+    .warning {
+      background: #fef3c7;
+      border: 1px solid #f59e0b;
+      padding: 15px;
+      border-radius: 6px;
+      margin: 20px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>🔒 Firestore Security Rules Test</h1>
+
+  <div class="info">
+    <strong>ℹ️ Instructions:</strong>
+    <ol style="margin: 10px 0 0 0; padding-left: 20px;">
+      <li>Make sure you have a valid beta user in your database (e.g., admin@techarix.com)</li>
+      <li>Update the Firebase config below with your credentials</li>
+      <li>Click "Run All Tests" to verify security rules</li>
+    </ol>
+  </div>
+
+  <div class="test-section">
+    <h2>Configuration</h2>
+    <label>
+      <input type="radio" name="env" value="dev" checked> Development (Instaspec-dev)
+    </label>
+    <label style="margin-left: 20px;">
+      <input type="radio" name="env" value="prod"> Production (InstaSpec-DHW)
+    </label>
+    <br><br>
+    <label>
+      Beta User Email to Test:
+      <input type="email" id="testEmail" value="admin@techarix.com" style="padding: 8px; width: 250px; border: 1px solid #ddd; border-radius: 4px;">
+    </label>
+  </div>
+
+  <div class="test-section">
+    <h2>Test Controls</h2>
+    <button onclick="runAllTests()">🚀 Run All Tests</button>
+    <button onclick="clearResults()">🔄 Clear Results</button>
+
+    <div class="summary" id="summary" style="display: none;">
+      <div class="summary-item" style="background: #f0fdf4;">
+        <h3>Passed</h3>
+        <p class="count" id="passCount">0</p>
+      </div>
+      <div class="summary-item" style="background: #fef2f2;">
+        <h3>Failed</h3>
+        <p class="count" id="failCount">0</p>
+      </div>
+      <div class="summary-item" style="background: #eff6ff;">
+        <h3>Total</h3>
+        <p class="count" id="totalCount">0</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="test-section">
+    <h2>Test Results</h2>
+    <div id="results"></div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+    import { getFirestore, collection, doc, getDoc, setDoc, addDoc, deleteDoc } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+
+    // IMPORTANT: Update these with your Firebase credentials
+    const configs = {
+      dev: {
+        apiKey: "YOUR_DEV_API_KEY",
+        authDomain: "YOUR_DEV_AUTH_DOMAIN",
+        projectId: "instaspec-dev",
+        storageBucket: "YOUR_DEV_STORAGE_BUCKET",
+        messagingSenderId: "YOUR_DEV_SENDER_ID",
+        appId: "YOUR_DEV_APP_ID"
+      },
+      prod: {
+        apiKey: "YOUR_PROD_API_KEY",
+        authDomain: "YOUR_PROD_AUTH_DOMAIN",
+        projectId: "instaspec-dhw",
+        storageBucket: "YOUR_PROD_STORAGE_BUCKET",
+        messagingSenderId: "YOUR_PROD_SENDER_ID",
+        appId: "YOUR_PROD_APP_ID"
+      }
+    };
+
+    let db;
+    let testResults = { pass: 0, fail: 0, total: 0 };
+
+    function initFirebase() {
+      const env = document.querySelector('input[name="env"]:checked').value;
+      const app = initializeApp(configs[env]);
+      db = getFirestore(app);
+      console.log(`Initialized Firebase for ${env} environment`);
+    }
+
+    function addResult(testName, description, passed, error = null) {
+      testResults.total++;
+      if (passed) {
+        testResults.pass++;
+      } else {
+        testResults.fail++;
+      }
+
+      const resultsDiv = document.getElementById('results');
+      const testCase = document.createElement('div');
+      testCase.className = `test-case ${passed ? 'success' : 'error'}`;
+
+      testCase.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <strong>${testName}</strong>
+            <p style="margin: 5px 0; color: #666;">${description}</p>
+          </div>
+          <span class="status ${passed ? 'pass' : 'fail'}">${passed ? 'PASS' : 'FAIL'}</span>
+        </div>
+        ${error ? `<div class="code">Error: ${error}</div>` : ''}
+      `;
+
+      resultsDiv.insertBefore(testCase, resultsDiv.firstChild);
+      updateSummary();
+    }
+
+    function updateSummary() {
+      document.getElementById('summary').style.display = 'flex';
+      document.getElementById('passCount').textContent = testResults.pass;
+      document.getElementById('failCount').textContent = testResults.fail;
+      document.getElementById('totalCount').textContent = testResults.total;
+    }
+
+    async function testReadBetaUser() {
+      const testEmail = document.getElementById('testEmail').value;
+      try {
+        const userDoc = await getDoc(doc(db, 'betaUsers', testEmail));
+        const exists = userDoc.exists();
+        addResult(
+          'Read Beta User',
+          `Attempt to read betaUsers/${testEmail}`,
+          true,
+          exists ? null : `User ${testEmail} does not exist in database`
+        );
+        return exists;
+      } catch (error) {
+        addResult('Read Beta User', `Attempt to read betaUsers/${testEmail}`, false, error.message);
+        return false;
+      }
+    }
+
+    async function testReadNonExistentBetaUser() {
+      const fakeEmail = 'nonexistent' + Date.now() + '@example.com';
+      try {
+        const userDoc = await getDoc(doc(db, 'betaUsers', fakeEmail));
+        const exists = userDoc.exists();
+        addResult(
+          'Read Non-Existent User',
+          'Should allow read even if user does not exist',
+          !exists
+        );
+      } catch (error) {
+        addResult('Read Non-Existent User', 'Should allow read operation', false, error.message);
+      }
+    }
+
+    async function testCreateProjectWithValidUser() {
+      const testEmail = document.getElementById('testEmail').value;
+      const testId = 'test_project_' + Date.now();
+      try {
+        await setDoc(doc(db, 'projects', testId), {
+          ownerEmail: testEmail,
+          name: 'Test Project',
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        });
+        addResult(
+          'Create Project (Valid User)',
+          `Create project with valid beta user: ${testEmail}`,
+          true
+        );
+        // Cleanup
+        try { await deleteDoc(doc(db, 'projects', testId)); } catch(e) {}
+      } catch (error) {
+        addResult(
+          'Create Project (Valid User)',
+          `Should allow project creation for valid beta user`,
+          false,
+          error.message
+        );
+      }
+    }
+
+    async function testCreateProjectWithInvalidUser() {
+      const fakeEmail = 'invalid' + Date.now() + '@example.com';
+      const testId = 'test_project_invalid_' + Date.now();
+      try {
+        await setDoc(doc(db, 'projects', testId), {
+          ownerEmail: fakeEmail,
+          name: 'Test Project',
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        });
+        addResult(
+          'Create Project (Invalid User)',
+          'Should DENY project creation for non-existent user',
+          false,
+          'Security rules allowed creation with invalid user!'
+        );
+        // Cleanup
+        try { await deleteDoc(doc(db, 'projects', testId)); } catch(e) {}
+      } catch (error) {
+        addResult(
+          'Create Project (Invalid User)',
+          'Should DENY project creation for non-existent user',
+          true,
+          null
+        );
+      }
+    }
+
+    async function testSubmitFeedback() {
+      const testEmail = document.getElementById('testEmail').value;
+      try {
+        const docRef = await addDoc(collection(db, 'feedback'), {
+          email: testEmail,
+          context: 'Test',
+          message: 'This is a security test feedback',
+          createdAt: Date.now()
+        });
+        addResult(
+          'Submit Feedback',
+          `Submit feedback with valid beta user: ${testEmail}`,
+          true
+        );
+        // Note: Cannot delete due to immutable rules
+      } catch (error) {
+        addResult(
+          'Submit Feedback',
+          'Should allow feedback submission for valid beta user',
+          false,
+          error.message
+        );
+      }
+    }
+
+    async function testSubmitFeedbackInvalidUser() {
+      const fakeEmail = 'invalid' + Date.now() + '@example.com';
+      try {
+        await addDoc(collection(db, 'feedback'), {
+          email: fakeEmail,
+          context: 'Test',
+          message: 'This should fail',
+          createdAt: Date.now()
+        });
+        addResult(
+          'Submit Feedback (Invalid User)',
+          'Should DENY feedback from non-existent user',
+          false,
+          'Security rules allowed feedback from invalid user!'
+        );
+      } catch (error) {
+        addResult(
+          'Submit Feedback (Invalid User)',
+          'Should DENY feedback from non-existent user',
+          true,
+          null
+        );
+      }
+    }
+
+    async function testUpdateFeedback() {
+      const testEmail = document.getElementById('testEmail').value;
+      try {
+        // First create feedback
+        const docRef = await addDoc(collection(db, 'feedback'), {
+          email: testEmail,
+          context: 'Test',
+          message: 'Original message',
+          createdAt: Date.now()
+        });
+
+        // Try to update it (should fail - immutable)
+        try {
+          await setDoc(docRef, {
+            email: testEmail,
+            context: 'Test',
+            message: 'Updated message',
+            createdAt: Date.now()
+          });
+          addResult(
+            'Update Feedback (Immutable)',
+            'Should DENY updates to feedback (immutable)',
+            false,
+            'Security rules allowed feedback update!'
+          );
+        } catch (updateError) {
+          addResult(
+            'Update Feedback (Immutable)',
+            'Should DENY updates to feedback (immutable)',
+            true,
+            null
+          );
+        }
+      } catch (error) {
+        addResult(
+          'Update Feedback (Immutable)',
+          'Test setup failed',
+          false,
+          error.message
+        );
+      }
+    }
+
+    async function testCreateLoginLog() {
+      const testEmail = document.getElementById('testEmail').value;
+      try {
+        await addDoc(collection(db, 'betaLoginLogs'), {
+          email: testEmail,
+          isAdmin: false,
+          timestamp: Date.now()
+        });
+        addResult(
+          'Create Login Log',
+          'Should allow login log creation for valid user',
+          true
+        );
+      } catch (error) {
+        addResult(
+          'Create Login Log',
+          'Should allow login log creation for valid user',
+          false,
+          error.message
+        );
+      }
+    }
+
+    async function testUpdateUsage() {
+      const testEmail = document.getElementById('testEmail').value;
+      try {
+        await setDoc(doc(db, 'betaUsage', testEmail), {
+          email: testEmail,
+          count: 5,
+          limit: 10,
+          updatedAt: Date.now()
+        }, { merge: true });
+        addResult(
+          'Update Usage',
+          'Should allow usage update for valid user',
+          true
+        );
+      } catch (error) {
+        addResult(
+          'Update Usage',
+          'Should allow usage update for valid user',
+          false,
+          error.message
+        );
+      }
+    }
+
+    window.runAllTests = async function() {
+      // Clear previous results
+      testResults = { pass: 0, fail: 0, total: 0 };
+      document.getElementById('results').innerHTML = '<p style="color: #666;">Running tests...</p>';
+
+      try {
+        initFirebase();
+
+        // Check if user exists first
+        const userExists = await testReadBetaUser();
+
+        if (!userExists) {
+          const testEmail = document.getElementById('testEmail').value;
+          document.getElementById('results').innerHTML = `
+            <div class="warning">
+              <strong>⚠️ Warning:</strong> Beta user "${testEmail}" does not exist in the database.
+              <br><br>
+              Please create this user in Firebase Console first:
+              <div class="code">
+{
+  "email": "${testEmail}",
+  "code": "TEST-CODE-1234",
+  "plan": "beta_admin",
+  "isAdmin": true,
+  "expiresAt": null,
+  "createdAt": ${Date.now()},
+  "updatedAt": ${Date.now()}
+}
+              </div>
+            </div>
+          `;
+          return;
+        }
+
+        // Run all tests
+        await testReadNonExistentBetaUser();
+        await testCreateProjectWithValidUser();
+        await testCreateProjectWithInvalidUser();
+        await testSubmitFeedback();
+        await testSubmitFeedbackInvalidUser();
+        await testUpdateFeedback();
+        await testCreateLoginLog();
+        await testUpdateUsage();
+
+        // Show final summary
+        const summaryMessage = document.createElement('div');
+        summaryMessage.className = testResults.fail === 0 ? 'info' : 'warning';
+        summaryMessage.innerHTML = testResults.fail === 0
+          ? '<strong>✅ All tests passed!</strong> Your security rules are working correctly.'
+          : '<strong>⚠️ Some tests failed!</strong> Please review the failed tests above.';
+        document.getElementById('results').insertBefore(summaryMessage, document.getElementById('results').firstChild);
+
+      } catch (error) {
+        document.getElementById('results').innerHTML = `
+          <div class="test-case error">
+            <strong>❌ Test Suite Failed</strong>
+            <div class="code">${error.message}</div>
+            <p>Make sure you've updated the Firebase configuration in this file.</p>
+          </div>
+        `;
+      }
+    };
+
+    window.clearResults = function() {
+      testResults = { pass: 0, fail: 0, total: 0 };
+      document.getElementById('results').innerHTML = '';
+      document.getElementById('summary').style.display = 'none';
+    };
+  </script>
+</body>
+</html>

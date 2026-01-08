@@ -4,11 +4,15 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host 0.0.0.0 --port 5173",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "standards:audit": "vitest run --config vitest.config.js"
+    "standards:audit": "vitest run --config vitest.config.js",
+    "deploy:rules:dev": "firebase use dev && cp firestore.rules.dev firestore.rules && firebase deploy --only firestore:rules",
+    "deploy:rules:prod": "firebase use prod && cp firestore.rules.prod firestore.rules && firebase deploy --only firestore:rules",
+    "firebase:dev": "firebase use dev",
+    "firebase:prod": "firebase use prod"
   },
   "dependencies": {
     "firebase": "^12.6.0",
