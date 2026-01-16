@@ -1,4 +1,4 @@
-import { db } from "../firebase";
+import { db, ensureAuth } from "../firebase";
 import {
   collection,
   addDoc,
@@ -14,7 +14,12 @@ import { normalizeEmail } from "./betaAccess";
 export async function loadProjectsForUser(rawEmail) {
   const email = normalizeEmail(rawEmail);
   if (!email) return [];
-  const q = query(collection(db, "projects"), where("ownerEmail", "==", email));
+
+  // Ensure Firebase Auth is ready before accessing Firestore
+  const user = await ensureAuth();
+
+  // Query by UID (owner field) instead of email for better security
+  const q = query(collection(db, "projects"), where("owner", "==", user.uid));
   const snap = await getDocs(q);
   return snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
 }
@@ -22,8 +27,18 @@ export async function loadProjectsForUser(rawEmail) {
 export async function saveProjectForUser(rawEmail, project) {
   const email = normalizeEmail(rawEmail);
   if (!email) throw new Error("Missing owner email");
+
+  // Ensure Firebase Auth is ready before accessing Firestore
+  const user = await ensureAuth();
+
   const now = Date.now();
-  const payload = { ...project, ownerEmail: email, updatedAt: now };
+  // Store with UID-based ownership and email for reference
+  const payload = {
+    ...project,
+    owner: user.uid,           // UID for Firestore rules
+    userEmail: email,          // Email for reference/display
+    updatedAt: now
+  };
 
   if (project.id) {
     const ref = doc(db, "projects", project.id);
@@ -47,6 +62,10 @@ export async function saveProjectForUser(rawEmail, project) {
 
 export async function deleteProjectForUser(projectId) {
   if (!projectId) return;
+
+  // Ensure Firebase Auth is ready before accessing Firestore
+  await ensureAuth();
+
   const ref = doc(db, "projects", projectId);
   await deleteDoc(ref);
 }

@@ -5,16 +5,19 @@ import BetaFeedbackModal from "./components/BetaFeedbackModal";
 import FeedbackModal from "./components/FeedbackModal";
 import { isAdminEmail, getDownloadUsage, incrementDownloadCount } from "./auth/betaAccess";
 import { loadProjectsForUser, saveProjectForUser, deleteProjectForUser } from "./auth/projectStore";
+import { MasterKeyProvider, useMasterKey } from "./features/masterkey/context/MasterKeyContext";
+import MasterKeyToggleWithContext from "./features/masterkey/components/shared/MasterKeyToggleWithContext";
+import MasterKeyWizard from "./features/masterkey/components/wizard/MasterKeyWizard";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { 
-  LayoutGrid, PlusCircle, FolderOpen, Trash2, 
-  Globe, Building, Save, X, Copy, Pencil, DoorClosed, 
-  DoorOpen, AlertCircle, ArrowRight, ArrowLeft, FileSpreadsheet, 
-  Brain, Check, AlertTriangle, TreeDeciduous, RectangleHorizontal, 
+import {
+  LayoutGrid, PlusCircle, FolderOpen, Trash2,
+  Globe, Building, Save, X, Copy, Pencil, DoorClosed,
+  DoorOpen, AlertCircle, ArrowRight, ArrowLeft, FileSpreadsheet,
+  Brain, Check, AlertTriangle, TreeDeciduous, RectangleHorizontal,
   Menu, ChevronDown, Search, Info, Flame, Wind, Accessibility, RotateCcw,
   Eye, Layers, UserCircle, History, Box, Download, Library, MoveHorizontal,
   Lock, Settings, MousePointer, Power, Printer, FileText, Volume2, Scale,
-  BookOpen, UploadCloud, Wand2, ShieldCheck, Wrench, RefreshCw, Zap, MessageSquare
+  BookOpen, UploadCloud, Wand2, ShieldCheck, Wrench, RefreshCw, Zap, MessageSquare, Key
 } from 'lucide-react';
 import { traceRuleEvent, traceSetEvent, STANDARDS_TRACE_ENABLED } from "./standards/trace";
 import { evaluateSetValidationIssues } from "./standards/validation";
@@ -152,8 +155,8 @@ const WORKFLOW_STEPS_CONTENT = [
   { title: "Hardware Sets", body: "Door Hardware Layout Preview shows hinges, closers, maglocks, and panic trim before specification." },
   { title: "Validation & Review", body: "Compliance Pulse verifies life-safety, then exports BIM, PDF, and Excel packages in one click." }
 ];
-const WIZARD_STEPS = ["Project Setup", "Door Schedule", "Hardware Sets", "Validation & Review"];
-const WIZARD_SHORT_LABELS = ["SETUP", "SCHEDULE", "PREVIEW", "GENERATE"];
+const WIZARD_STEPS = ["Project Setup", "Door Schedule", "Hardware Sets", "Validation & Review", "Master Key Design"];
+const WIZARD_SHORT_LABELS = ["SETUP", "SCHEDULE", "PREVIEW", "GENERATE", "MASTER KEY"];
 const WHY_INSTASPEC_CARDS = [
   {
     title: "Compliance Support",
@@ -343,7 +346,12 @@ const PRODUCT_CATALOG = {
   "Locks": {
     csi: "08 71 50",
     types: [
-      { name: "Mortise Lock", styles: ["Sashlock", "Deadlock", "Latch", "Bathroom Lock", "Nightlatch"] },
+      {
+        name: "Mortise Lock",
+        styles: ["Sashlock", "Deadlock", "Latch", "Bathroom Lock", "Nightlatch"],
+        ansiStyles: ["Passage", "Privacy", "Classroom", "Storeroom", "Entrance", "Office", "Apartment", "Dormitory", "Institutional"],
+        enStyles: ["Sashlock", "Deadlock", "Latch", "Bathroom Lock", "Nightlatch"]
+      },
       { name: "Cylindrical Lock", styles: ["Leverset", "Knobset", "Interconnected"] },
       { name: "Hotel Lock", styles: ["RFID Mortise", "Mobile Key"] },
       { name: "Panic Bar", styles: ["Rim Type", "Surface Vertical Rod", "Concealed Vertical Rod", "Mortise Type"] },
@@ -1618,7 +1626,8 @@ const normalizeProject = (project) => {
     doors: normalizedDoors,
     sets: normalizedSets,
     instantInputs: mergedInstant,
-    instantSchedulingEnabled: Boolean(project.instantSchedulingEnabled)
+    instantSchedulingEnabled: Boolean(project.instantSchedulingEnabled),
+    mkSystemEnabled: project.mkSystemEnabled !== undefined ? Boolean(project.mkSystemEnabled) : false  // Default to OFF for existing projects
   };
 };
 
@@ -2658,6 +2667,30 @@ const LandingPage = ({
   </div>
 );
 };
+
+// Helper component to access MasterKey context for the button
+const MasterKeyButtonSection = ({ facilityType, onNavigate }) => {
+  const { mkSystemEnabled } = useMasterKey();
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 animate-slideUp">
+      <MasterKeyToggleWithContext facilityType={facilityType} />
+
+      {mkSystemEnabled && (
+        <div className="mt-6 flex justify-center">
+          <button
+            onClick={onNavigate}
+            className="px-8 py-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 font-bold flex items-center justify-center gap-3 shadow-xl text-lg transition-all hover:scale-105"
+          >
+            <Key size={24} /> Design the MKS
+            <ArrowRight size={24} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const App = () => {
   const { user, logout } = useAuth();
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -2768,6 +2801,16 @@ const App = () => {
       message,
       showCancel: false,
       confirmLabel
+    });
+  }, [openPrompt]);
+
+  const showConfirm = useCallback((title, message, confirmLabel = "Continue", cancelLabel = "Cancel") => {
+    return openPrompt({
+      title,
+      message,
+      showCancel: true,
+      confirmLabel,
+      cancelLabel
     });
   }, [openPrompt]);
   const triggerLockResetSignal = useCallback((key) => {
@@ -3158,7 +3201,8 @@ const App = () => {
       sets: [],
       auditLog: [],
       instantInputs: cloneInstantInputs(),
-      instantSchedulingEnabled: false
+      instantSchedulingEnabled: false,
+      mkSystemEnabled: false  // Master Key System OFF by default
     };
     setProjects([...projects, newProj]);
     loadProject(id);
@@ -4189,7 +4233,7 @@ const App = () => {
           >
             <DoorClosed className="text-indigo-600" />
             <span>InstaSpec</span>
-            <span className="text-xs text-gray-400 font-normal ml-1">v1.5 Beta</span>
+            <span className="text-xs text-gray-400 font-normal ml-1">v2.1 Beta</span>
           </button>
 
           {/* CENTER: Role + status (desktop) */}
@@ -4504,58 +4548,72 @@ const App = () => {
               <div className="bg-white/90 border border-gray-200 rounded-2xl px-3 py-4 shadow-sm">
                 {/* Desktop horizontal flow */}
                 <div className="hidden md:flex items-center gap-3">
-                  {WIZARD_STEPS.map((label, idx, arr) => {
-                    const isActive = step === idx;
-                    const isComplete = isStepComplete(idx);
-                    const isWarning = blockedStep === idx && idx > step;
-                    return (
-                      <React.Fragment key={`desktop-step-${label}`}>
-                        <button
-                          type="button"
-                          onClick={() => handleStepChange(idx)}
-                          className="flex flex-col items-center gap-2 min-w-[130px] text-center focus:outline-none"
-                        >
-                          <div
-                            className={`w-10 h-10 rounded-full flex items-center justify-center font-bold border-2 transition-all ${
-                              isActive
-                                ? 'bg-indigo-600 border-indigo-600 text-white shadow'
-                                : isComplete
-                                ? 'bg-emerald-500 border-emerald-500 text-white'
-                                : isWarning
-                                ? 'bg-orange-50 border-orange-400 text-orange-500'
-                                : 'bg-white border-gray-300 text-gray-400'
-                            }`}
+                  {(() => {
+                    // Dynamic wizard steps based on Master Key System enabled state
+                    const displaySteps = getProj()?.mkSystemEnabled
+                      ? WIZARD_STEPS
+                      : WIZARD_STEPS.slice(0, 4); // Only show first 4 steps when MK is OFF
+                    return displaySteps.map((label, idx, arr) => {
+                      const isActive = step === idx;
+                      const isComplete = isStepComplete(idx);
+                      const isWarning = blockedStep === idx && idx > step;
+                      return (
+                        <React.Fragment key={`desktop-step-${label}`}>
+                          <button
+                            type="button"
+                            onClick={() => handleStepChange(idx)}
+                            className="flex flex-col items-center gap-2 min-w-[130px] text-center focus:outline-none"
                           >
-                            {isComplete ? <Check size={16} /> : idx + 1}
-                          </div>
-                          <span
-                            className={`text-xs font-bold uppercase tracking-wider ${
-                              isActive ? 'text-indigo-600' : 'text-gray-400'
-                            }`}
-                          >
-                            {label}
-                          </span>
-                        </button>
-                        {idx < arr.length - 1 && (
-                          <div
-                            className={`flex-1 h-0.5 rounded-full ${
-                              blockedStep === idx + 1
-                                ? 'bg-orange-400'
-                                : isStepComplete(idx)
-                                ? 'bg-emerald-400'
-                                : 'bg-gray-200'
-                            }`}
-                          />
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
+                            <div
+                              className={`w-10 h-10 rounded-full flex items-center justify-center font-bold border-2 transition-all ${
+                                isActive
+                                  ? 'bg-indigo-600 border-indigo-600 text-white shadow'
+                                  : isComplete
+                                  ? 'bg-emerald-500 border-emerald-500 text-white'
+                                  : isWarning
+                                  ? 'bg-orange-50 border-orange-400 text-orange-500'
+                                  : 'bg-white border-gray-300 text-gray-400'
+                              }`}
+                            >
+                              {isComplete ? <Check size={16} /> : idx + 1}
+                            </div>
+                            <span
+                              className={`text-xs font-bold uppercase tracking-wider ${
+                                isActive ? 'text-indigo-600' : 'text-gray-400'
+                              }`}
+                            >
+                              {label}
+                            </span>
+                          </button>
+                          {idx < arr.length - 1 && (
+                            <div
+                              className={`flex-1 h-0.5 rounded-full ${
+                                blockedStep === idx + 1
+                                  ? 'bg-orange-400'
+                                  : isStepComplete(idx)
+                                  ? 'bg-emerald-400'
+                                  : 'bg-gray-200'
+                              }`}
+                            />
+                          )}
+                        </React.Fragment>
+                      );
+                    });
+                  })()}
                 </div>
                 {/* Mobile single line */}
                 <div className="md:hidden">
                   <div className="flex items-center justify-between gap-2">
-                    {WIZARD_SHORT_LABELS.map((shortLabel, idx, arr) => {
-                      const label = WIZARD_STEPS[idx];
+                    {(() => {
+                      // Dynamic wizard steps based on Master Key System enabled state
+                      const displayShortLabels = getProj()?.mkSystemEnabled
+                        ? WIZARD_SHORT_LABELS
+                        : WIZARD_SHORT_LABELS.slice(0, 4); // Only show first 4 steps when MK is OFF
+                      const displaySteps = getProj()?.mkSystemEnabled
+                        ? WIZARD_STEPS
+                        : WIZARD_STEPS.slice(0, 4);
+                      return displayShortLabels.map((shortLabel, idx, arr) => {
+                        const label = displaySteps[idx];
                       const isActive = step === idx;
                       const isComplete = isStepComplete(idx);
                       const isWarning = blockedStep === idx && idx > step;
@@ -4603,15 +4661,19 @@ const App = () => {
                           )}
                         </React.Fragment>
                       );
-                    })}
+                    });
+                  })()}
                   </div>
                 </div>
               </div>
             </div>
 
             {/* Step 0: Setup */}
-            {step === 0 && (() => {
-              const proj = getProj();
+            {step === 0 && currentId && (
+              <MasterKeyProvider projectId={currentId} projectDoors={getProj().doors || []}>
+                {(() => {
+                  const proj = getProj();
+                  console.log('Step 0 rendering, mkSystemEnabled:', proj.mkSystemEnabled);
               const facilityType = proj.type;
               const facilityInputs = getInstantInputsForProject(proj, facilityType);
               const instantEnabled = Boolean(proj.instantSchedulingEnabled);
@@ -4889,7 +4951,9 @@ const App = () => {
                   </div>
                 </div>
               );
-            })()}
+                })()}
+              </MasterKeyProvider>
+            )}
 
             {/* Step 1: Door Schedule */}
             {step === 1 && (
@@ -5270,11 +5334,80 @@ const App = () => {
                                                             compatibilityMessage = "Glass escape routes require L-shaped panic push/pull hardware.";
                                                         }
                                                     }
-                                                    const stylesAll = (catData?.types.find(t => t.name === effectiveType) || { styles: [] }).styles || [];
+                                                    const typeData = catData?.types.find(t => t.name === effectiveType);
+                                                    const projectStandard = getProj().standard || 'ANSI';
+                                                    let stylesAll = (typeData || { styles: [] }).styles || [];
                                                     let styles = stylesAll;
+
+                                                    // Filter Mortise Lock styles based on standard (ANSI vs EN)
+                                                    if (cat === 'Locks' && effectiveType === 'Mortise Lock' && typeData) {
+                                                        if (projectStandard === 'ANSI' && typeData.ansiStyles) {
+                                                            // ANSI projects: Use ANSI lock functions
+                                                            stylesAll = typeData.ansiStyles;
+                                                            styles = typeData.ansiStyles;
+
+                                                            // Auto-select lock function based on hardware set name
+                                                            const setName = s.name?.toLowerCase() || '';
+                                                            let suggestedFunction = null;
+
+                                                            if (setName.includes('classroom') || setName.includes('lecture')) {
+                                                                suggestedFunction = 'Classroom';
+                                                            } else if (setName.includes('storeroom') || setName.includes('storage') || setName.includes('warehouse')) {
+                                                                suggestedFunction = 'Storeroom';
+                                                            } else if (setName.includes('office')) {
+                                                                suggestedFunction = 'Office';
+                                                            } else if (setName.includes('entrance') || setName.includes('lobby') || setName.includes('main')) {
+                                                                suggestedFunction = 'Entrance';
+                                                            } else if (setName.includes('restroom') || setName.includes('bathroom') || setName.includes('toilet')) {
+                                                                suggestedFunction = 'Privacy';
+                                                            } else if (setName.includes('corridor') || setName.includes('passage') || setName.includes('hallway')) {
+                                                                suggestedFunction = 'Passage';
+                                                            } else if (setName.includes('apartment') || setName.includes('unit')) {
+                                                                suggestedFunction = 'Apartment';
+                                                            } else if (setName.includes('dormitory') || setName.includes('dorm') || setName.includes('hostel')) {
+                                                                suggestedFunction = 'Dormitory';
+                                                            } else if (setName.includes('hospital') || setName.includes('clinic') || setName.includes('medical')) {
+                                                                suggestedFunction = 'Institutional';
+                                                            }
+
+                                                            // Auto-apply suggestion if not already set
+                                                            if (suggestedFunction && item.style !== suggestedFunction) {
+                                                                setTimeout(() => updateSetItem(s.id, originalIndex, 'style', suggestedFunction), 0);
+                                                            }
+                                                        } else if (projectStandard === 'EN' && typeData.enStyles) {
+                                                            // EN projects: Use EN lock types
+                                                            stylesAll = typeData.enStyles;
+                                                            styles = typeData.enStyles;
+                                                        }
+                                                    }
+
+                                                    // Filter styles for Electrified based on fail-safe requirements
                                                     if (cat === 'Electrified' && setProfile.requiresFailSafe) {
                                                         const filteredStyles = stylesAll.filter(st => st.toLowerCase().includes('fail-safe') || st.toLowerCase().includes('rex'));
                                                         if (filteredStyles.length > 0) styles = filteredStyles;
+                                                    }
+
+                                                    // Filter cylinder styles based on standard (ANSI vs EN)
+                                                    if (cat === 'Cylinders' && effectiveType === 'Cylinder') {
+                                                        if (projectStandard === 'ANSI') {
+                                                            // ANSI projects: Only Rim Cylinder and Mortise Cylinder
+                                                            styles = stylesAll.filter(st =>
+                                                                st === 'Rim Cylinder' || st === 'Mortise Cylinder'
+                                                            );
+
+                                                            // Auto-select Mortise Cylinder if lock is Mortise Lock
+                                                            const lockItem = s.items.find(i => i.category === 'Locks');
+                                                            if (lockItem && lockItem.type === 'Mortise Lock') {
+                                                                if (item.style !== 'Mortise Cylinder') {
+                                                                    setTimeout(() => updateSetItem(s.id, originalIndex, 'style', 'Mortise Cylinder'), 0);
+                                                                }
+                                                            }
+                                                        } else if (projectStandard === 'EN') {
+                                                            // EN 1303 projects: Only Euro Profile and Oval Profile
+                                                            styles = stylesAll.filter(st =>
+                                                                st === 'Euro Profile' || st === 'Oval Profile'
+                                                            );
+                                                        }
                                                     }
 
                                                     return (
@@ -5535,11 +5668,34 @@ const App = () => {
                     <div className="text-lg font-bold text-gray-800">{getProj().details?.jurisdiction || "Standard"}</div>
                   </div>
                 </div>
+
+                {/* Master Key System Section */}
+                <MasterKeyProvider projectId={currentId} projectDoors={getProj().doors || []}>
+                  <MasterKeyButtonSection
+                    facilityType={getProj().type}
+                    onNavigate={() => setStep(5)}
+                  />
+                </MasterKeyProvider>
               </div>
             )}
 
           </div>
         )}
+
+        {/* Step 5: Master Key Design */}
+        {step === 5 && currentId && (
+          <MasterKeyProvider projectId={currentId} projectDoors={getProj().doors || []}>
+            <MasterKeyWizard
+              projectDoors={getProj().doors || []}
+              projectName={getProj().name || 'Untitled Project'}
+              projectStandard={getProj().mkStandard || 'ANSI_BHMA'}
+              showNotice={showNotice}
+              showConfirm={showConfirm}
+              onBackToSetup={() => setStep(3)}
+            />
+          </MasterKeyProvider>
+        )}
+
       </main>
 
       {view === 'wizard' && (

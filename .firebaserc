@@ -1,6 +1,1 @@
-{
-  "projects": {
-    "dev": "instaspec-dev",
-    "prod": "instaspec-dhw"
-  }
-}
+{"projects":{"default":"instaspec-dhw"}}

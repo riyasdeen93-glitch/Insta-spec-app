@@ -15,7 +15,10 @@
     "firebase:prod": "firebase use prod"
   },
   "dependencies": {
+    "file-saver": "^2.0.5",
     "firebase": "^12.6.0",
+    "jspdf": "^4.0.0",
+    "jspdf-autotable": "^5.0.7",
     "lucide-react": "^0.344.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

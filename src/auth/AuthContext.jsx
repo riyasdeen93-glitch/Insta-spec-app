@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { getBetaUser, recordSuccessfulLogin } from "./betaAccess";
+import { createOrUpdateUserProfile } from "./userProfile";
 
 const STORAGE_KEY = "instaspec:user";
 
@@ -133,9 +134,21 @@ export const AuthProvider = ({ children }) => {
   }, [user?.email, refreshFromServer]);
 
   const login = useCallback(
-    (userRecord) => {
+    async (userRecord) => {
       const mapped = toUserState(userRecord);
       if (!mapped) return;
+
+      // Create or update user profile in Firestore to link Firebase Auth UID to email
+      try {
+        await createOrUpdateUserProfile(mapped.email);
+        if (import.meta.env.DEV) {
+          console.info("[Auth] User profile created/updated for:", mapped.email);
+        }
+      } catch (error) {
+        console.error("[Auth] Failed to create user profile:", error);
+        // Continue anyway - profile creation is not critical for beta access
+      }
+
       setUser(mapped);
       recordSuccessfulLogin(mapped.email, mapped.isAdmin);
     },

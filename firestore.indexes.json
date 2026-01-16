@@ -1,0 +1,125 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "hierarchies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "mkProjectId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "level",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "hierarchies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "parentHierarchyId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "keySymbol",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "assignments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "mkProjectId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "doorId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "assignments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "hierarchyId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "zones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "mkProjectId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "zoneName",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "door_zones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "zoneId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "doorId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "audit_log",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "mkProjectId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "audit_log",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "entityType",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "actionType",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

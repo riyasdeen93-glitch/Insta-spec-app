@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run dev)",
+      "Bash(cat:*)",
+      "Bash(firebase --version:*)",
+      "Bash(npx firebase --version)",
+      "Bash(npm install:*)",
+      "Bash(firebase deploy:*)",
+      "Bash(firebase emulators:start:*)",
+      "Bash(timeout 10 cmd:*)",
+      "Bash(timeout:*)",
+      "Bash(npm run build:*)"
+    ]
+  }
+}
