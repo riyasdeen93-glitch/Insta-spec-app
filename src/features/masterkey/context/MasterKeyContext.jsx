@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, getDocs, writeBatch, collection, query, onSnapshot, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../../firebase';
+import { db, ensureAuth } from '../../../firebase';
 import { getStandardConfig, getRecommendedHierarchy, STANDARDS } from '../utils/standards';
 import { validateStandardsCompliance } from '../utils/standardsValidation';
 
@@ -130,6 +130,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
       setLoading(true);
       setError(null);
 
+      // Ensure Firebase Auth is ready before accessing Firestore
+      await ensureAuth();
+
       console.log('toggleMKSystem called with:', enabled);
 
       if (enabled) {
@@ -223,6 +226,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
     try {
       setError(null);
 
+      // Ensure Firebase Auth is ready before accessing Firestore
+      await ensureAuth();
+
       console.log('updateMKApproach called with:', approach);
 
       // Update project document
@@ -255,6 +261,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
   const updateStandard = useCallback(async (newStandard) => {
     try {
       setError(null);
+
+      // Ensure Firebase Auth is ready before accessing Firestore
+      await ensureAuth();
 
       console.log('updateStandard called with:', newStandard);
 
@@ -292,6 +301,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
   const updateMKProject = useCallback(async (updates) => {
     try {
       setError(null);
+
+      // Ensure Firebase Auth is ready before accessing Firestore
+      await ensureAuth();
 
       if (!mkProject?.id) {
         throw new Error('No MK project found');
@@ -443,6 +455,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
   const addHierarchyLevel = useCallback(async (levelData) => {
     if (!mkProject?.id) return;
 
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
+
     try {
       const hierarchyRef = collection(db, 'mk_projects', mkProject.id, 'hierarchies');
       await addDoc(hierarchyRef, {
@@ -460,6 +475,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
   const updateHierarchyLevel = useCallback(async (hierarchyId, updates) => {
     if (!mkProject?.id) return;
 
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
+
     try {
       const hierarchyRef = doc(db, 'mk_projects', mkProject.id, 'hierarchies', hierarchyId);
       await updateDoc(hierarchyRef, {
@@ -475,6 +493,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
 
   const deleteHierarchyLevel = useCallback(async (hierarchyId) => {
     if (!mkProject?.id) return;
+
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
 
     try {
       // Check if level has children or assignments
@@ -496,6 +517,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
 
   const applyHierarchyTemplate = useCallback(async (facilityType) => {
     if (!mkProject?.id) return;
+
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
 
     try {
       const recommendedLevels = getRecommendedHierarchy(standard, facilityType);
@@ -541,6 +565,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
   const createZone = useCallback(async (zoneData) => {
     if (!mkProject?.id) return;
 
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
+
     try {
       const zoneRef = collection(db, 'mk_projects', mkProject.id, 'zones');
       const docRef = await addDoc(zoneRef, {
@@ -558,6 +585,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
 
   const autoGenerateZones = useCallback(async (projectDoors, approach) => {
     if (!mkProject?.id) return;
+
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
 
     try {
       // Generate zones based on approach
@@ -613,6 +643,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
   const deleteZone = useCallback(async (zoneId) => {
     if (!mkProject?.id) return;
 
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
+
     try {
       const zoneRef = doc(db, 'mk_projects', mkProject.id, 'zones', zoneId);
       await deleteDoc(zoneRef);
@@ -628,6 +661,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
   // =====================================================
   const updateDiffersCount = useCallback(async () => {
     if (!mkProject?.id) return;
+
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
 
     try {
       // Calculate total unique keys in the system
@@ -707,6 +743,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
   const assignDoorToKey = useCallback(async (doorId, hierarchyId, keySymbol, options = {}) => {
     if (!mkProject?.id) return;
 
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
+
     const {
       keyType = 'KD',           // 'KD' (Keyed Differ) or 'KA' (Keyed Alike)
       keyQuantity = 2,          // Default: 2 keys per door
@@ -740,6 +779,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
   const bulkAssignDoors = useCallback(async (doorIds, hierarchyId, keySymbol) => {
     if (!mkProject?.id) return;
 
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
+
     try {
       const batch = writeBatch(db);
       const assignmentRef = collection(db, 'mk_projects', mkProject.id, 'assignments');
@@ -764,6 +806,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
 
   const unassignDoor = useCallback(async (doorId) => {
     if (!mkProject?.id) return;
+
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
 
     try {
       // Find the assignment document for this door
@@ -814,6 +859,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
     if (doorIds.length < 2) {
       throw new Error('KA group must have at least 2 doors');
     }
+
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
 
     try {
       // Count existing KA groups for this master to generate symbol
@@ -867,6 +915,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
   const updateKAGroup = useCallback(async (kaGroupId, updates) => {
     if (!mkProject?.id) return;
 
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
+
     try {
       const kaGroupRef = doc(db, 'mk_projects', mkProject.id, 'ka_groups', kaGroupId);
       await updateDoc(kaGroupRef, {
@@ -907,6 +958,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
   const deleteKAGroup = useCallback(async (kaGroupId) => {
     if (!mkProject?.id) return;
 
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
+
     try {
       const kaGroup = kaGroups.find(g => g.id === kaGroupId);
       if (!kaGroup) return;
@@ -938,6 +992,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
       throw new Error('Key quantity must be at least 1');
     }
 
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
+
     try {
       const assignment = assignments.find(a => a.doorId === doorId);
       if (!assignment) {
@@ -961,6 +1018,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
   // =====================================================
   const validateDesign = useCallback(async (projectDoors, facilityType) => {
     if (!mkProject?.id) return;
+
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
 
     try {
       const errors = [];
@@ -1053,6 +1113,9 @@ export const MasterKeyProvider = ({ children, projectId, projectDoors = [] }) =>
   // =====================================================
   const generateExport = useCallback(async (format, options, projectDoors) => {
     if (!mkProject?.id) return;
+
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
 
     try {
       // Generate export data

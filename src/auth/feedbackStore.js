@@ -1,5 +1,5 @@
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
-import { db } from "../firebase";
+import { db, ensureAuth } from "../firebase";
 import { normalizeEmail } from "./betaAccess";
 
 const FEEDBACK_COLLECTION = "feedback";
@@ -26,6 +26,9 @@ export async function submitFeedback({
   if (!message || !message.trim()) {
     throw new Error("Feedback must include a message.");
   }
+
+  // Ensure Firebase Auth is ready before accessing Firestore
+  await ensureAuth();
 
   const payload = {
     email: normalizedEmail,

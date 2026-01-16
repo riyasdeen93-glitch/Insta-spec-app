@@ -1,4 +1,4 @@
-import { db } from "../firebase";
+import { db, ensureAuth } from "../firebase";
 import {
   doc,
   getDoc,
@@ -95,6 +95,9 @@ export async function getBetaUser(rawEmail) {
   const email = normalizeEmail(rawEmail);
   if (!email) return null;
   try {
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
+
     const ref = doc(db, "betaUsers", email);
     const snap = await getDoc(ref);
     if (!snap.exists()) {
@@ -119,6 +122,9 @@ export async function getBetaUser(rawEmail) {
 
 export async function listBetaUsers() {
   try {
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
+
     const snap = await getDocs(collection(db, "betaUsers"));
     const users = snap.docs.map((docSnap) => {
       const data = docSnap.data();
@@ -149,6 +155,10 @@ export async function saveBetaUser({
 }) {
   const email = normalizeEmail(rawEmail);
   if (!email) throw new Error("Missing email");
+
+  // Ensure Firebase Auth is ready before accessing Firestore
+  await ensureAuth();
+
   const ref = doc(db, "betaUsers", email);
   const now = Date.now();
   const existingSnap = await getDoc(ref);
@@ -188,6 +198,10 @@ export async function saveBetaUser({
 export async function deleteBetaUser(rawEmail) {
   const email = normalizeEmail(rawEmail);
   if (!email) return;
+
+  // Ensure Firebase Auth is ready before accessing Firestore
+  await ensureAuth();
+
   try {
     await deleteDoc(doc(db, "betaUsers", email));
     betaUserCache.delete(email);
@@ -261,6 +275,9 @@ export const getLoginCountMap = () => {
 };
 const appendLoginLogToServer = async (entry) => {
   try {
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
+
     await addDoc(collection(db, BETA_LOGIN_LOG_COLLECTION), entry);
     await setDoc(
       getLoginStatsDocRef(),
@@ -284,6 +301,9 @@ export const getLoginStats = () => {
 };
 
 export const fetchLoginStats = async (options = {}) => {
+  // Ensure Firebase Auth is ready before accessing Firestore
+  await ensureAuth();
+
   const statsRef = getLoginStatsDocRef();
   let totalLogins = 0;
   try {
@@ -328,6 +348,9 @@ export async function recordSuccessfulLogin(email, isAdmin) {
   persistLoginLog();
   appendLoginLogToServer(entry);
   try {
+    // Ensure Firebase Auth is ready before accessing Firestore
+    await ensureAuth();
+
     await setDoc(
       doc(db, "betaUsers", entry.email),
       { loginCount: increment(1) },
@@ -428,6 +451,10 @@ export async function getDownloadUsage(rawEmail) {
   if (!email) {
     return { count: 0, limit: DEFAULT_DOWNLOAD_LIMIT };
   }
+
+  // Ensure Firebase Auth is ready before accessing Firestore
+  await ensureAuth();
+
   const usageRef = doc(db, DOWNLOAD_USAGE_COLLECTION, email);
   const snap = await getDoc(usageRef);
   if (!snap.exists()) {
@@ -445,6 +472,10 @@ export async function incrementDownloadCount(rawEmail, limit = DEFAULT_DOWNLOAD_
   if (!email) {
     return { allowed: false, count: 0, limit };
   }
+
+  // Ensure Firebase Auth is ready before accessing Firestore
+  await ensureAuth();
+
   const usageRef = doc(db, DOWNLOAD_USAGE_COLLECTION, email);
   return runTransaction(db, async (transaction) => {
     const snap = await transaction.get(usageRef);
@@ -498,6 +529,10 @@ export async function extendDownloadLimit(rawEmail, increment = 5) {
   if (!Number.isFinite(additional) || additional <= 0) {
     throw new Error("Increment must be a positive number.");
   }
+
+  // Ensure Firebase Auth is ready before accessing Firestore
+  await ensureAuth();
+
   const usageRef = doc(db, DOWNLOAD_USAGE_COLLECTION, email);
   return runTransaction(db, async (transaction) => {
     const snap = await transaction.get(usageRef);
