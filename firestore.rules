@@ -42,6 +42,70 @@ service cloud.firestore {
     }
 
     // =====================================================
+    // BETA USERS COLLECTION
+    // =====================================================
+    match /betaUsers/{email} {
+      // Anyone can read beta users (needed for login validation)
+      allow read: if true;
+
+      // Authenticated users can create/update
+      allow create, update: if isSignedIn();
+
+      // Authenticated users can delete
+      allow delete: if isSignedIn();
+    }
+
+    // =====================================================
+    // FEEDBACK COLLECTION
+    // =====================================================
+    match /feedback/{feedbackId} {
+      // Authenticated users can read feedback
+      allow read: if isSignedIn();
+
+      // Any authenticated user can submit feedback
+      allow create: if isSignedIn();
+
+      // Feedback is immutable
+      allow update, delete: if false;
+    }
+
+    // =====================================================
+    // BETA LOGIN LOGS COLLECTION
+    // =====================================================
+    match /betaLoginLogs/{logId} {
+      // Authenticated users can read logs
+      allow read: if isSignedIn();
+
+      // Authenticated users can create login logs
+      allow create: if isSignedIn();
+
+      // Logs are immutable
+      allow update, delete: if false;
+    }
+
+    // =====================================================
+    // BETA METADATA COLLECTION
+    // =====================================================
+    match /betaMetadata/{docId} {
+      // Anyone can read metadata
+      allow read: if true;
+
+      // Authenticated users can write metadata
+      allow write: if isSignedIn();
+    }
+
+    // =====================================================
+    // BETA USAGE COLLECTION (Download tracking)
+    // =====================================================
+    match /betaUsage/{email} {
+      // Authenticated users can read usage
+      allow read: if isSignedIn();
+
+      // Authenticated users can write usage
+      allow write: if isSignedIn();
+    }
+
+    // =====================================================
     // MK_PROJECTS COLLECTION
     // =====================================================
 
