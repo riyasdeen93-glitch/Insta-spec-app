@@ -189,6 +189,21 @@ service cloud.firestore {
       }
 
       // =====================================================
+      // VALIDATIONS SUBCOLLECTION
+      // =====================================================
+
+      match /validations/{validationId} {
+        allow read: if isSignedIn() &&
+                      isProjectOwner(get(/databases/$(database)/documents/mk_projects/$(mkProjectId)).data.projectId);
+
+        allow create: if isSignedIn() &&
+                        isProjectOwner(get(/databases/$(database)/documents/mk_projects/$(mkProjectId)).data.projectId);
+
+        // Validations are immutable after creation
+        allow update, delete: if false;
+      }
+
+      // =====================================================
       // AUDIT_LOG SUBCOLLECTION
       // =====================================================
 
