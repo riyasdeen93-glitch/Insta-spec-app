@@ -1,0 +1,21 @@
+{"users": [
+{
+  "localId": "Ah7pcJ5x5IaLvjwthOf1FpbLTjY2",
+  "email": "admin@techarix.com",
+  "emailVerified": false,
+  "passwordHash": "PHOF2fdqDeuk8DBU1tqWwo6AGxwgDtvClZwf6CGQDSn2wwKgg4w31Z/fu2OSb9I7NzkqORTD8qkiPPSWJYda8g==",
+  "salt": "gC/aKqsj92gKlA==",
+  "createdAt": "1765521979734",
+  "disabled": false,
+  "providerUserInfo": []
+},
+{
+  "localId": "nKhdwoKTQPQmhMjiMTydA4zQON72",
+  "lastSignedInAt": "1768555011914",
+  "createdAt": "1768555011914"
+},
+{
+  "localId": "viPkA6LlJZPzEFyT5SORom5UsPE3",
+  "lastSignedInAt": "1768567171268",
+  "createdAt": "1768567171268"
+}]}

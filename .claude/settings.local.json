@@ -10,7 +10,9 @@
       "Bash(firebase emulators:start:*)",
       "Bash(timeout 10 cmd:*)",
       "Bash(timeout:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(firebase auth:export:*)",
+      "Bash(node check-firebase-config.js:*)"
     ]
   }
 }
